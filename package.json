@@ -1,0 +1,25 @@
+{
+  "name": "syncchat",
+  "version": "0.1.0",
+  "description": "Synchronous participant-to-participant chat for Qualtrics studies, with matching rules in one YAML file",
+  "main": "src/index.js",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "validate": "node src/index.js --validate"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "js-yaml": "^4.1.0",
+    "mongodb": "^6.8.0",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.7.5"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "license": "MIT"
+}

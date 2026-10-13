@@ -1,0 +1,31 @@
+# Example 2: match people who share at least one item in their top three,
+# prefer partners who share more items and are close in age, and tell both
+# people why they were matched.
+study:
+  id: shared-top3
+  group_size: 2
+
+participant:
+  id_param: id
+  condition_param: cond
+  fields:
+    top3: {type: list, sep: ","}        # ?top3=hiking,cooking,chess
+    age:  {type: number}
+
+conditions:
+  shared:
+    require:
+      - overlap: {field: top3, min: 1}
+      - within: {field: age, max: 15, relaxable: true}   # dropped after relax_after
+    prefer:
+      - overlap: {field: top3}          # more shared items ranks higher
+      - closest: age                    # then closer age
+    relax_after: 45s
+    reveal: "You were matched because you both picked {shared.top3} in your top three."
+
+timing:
+  match_timeout: 90s
+  chat_duration: 5m
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

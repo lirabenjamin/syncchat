@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: syncchat
+    runtime: node
+    plan: starter            # free instances sleep after 15 min idle; use a paid plan for live sessions
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGO_URI       # strongly recommended on Render: the local disk is wiped on every deploy/restart
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true

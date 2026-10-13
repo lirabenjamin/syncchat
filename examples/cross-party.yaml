@@ -1,0 +1,31 @@
+# Example 1: cross-party dyads.
+# Every Democrat is paired with a Republican. No condition parameter is needed
+# because there is only one condition.
+study:
+  id: cross-party-dyads
+  group_size: 2
+
+participant:
+  id_param: id
+  condition_param: cond
+  fields:
+    party: {type: category, values: [Democrat, Republican]}
+
+conditions:
+  cross:
+    require:
+      - differ: party
+    reveal: "You are chatting with a {partner.party}."
+
+chat:
+  intro: "Topic: immigration. Share what you think and ask what they think."
+
+timing:
+  match_timeout: 2m
+  chat_duration: 3m
+  min_messages: 2
+
+on_timeout: nomatch
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

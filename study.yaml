@@ -1,0 +1,39 @@
+# Study configuration. Edit this file, then run `npm run validate` to check it.
+# Every option is explained in README.md -> "Writing matching rules".
+study:
+  id: example-study
+  group_size: 2                 # v1: dyads only
+
+participant:                    # what Qualtrics passes in the iframe URL
+  id_param: id                  # URL param holding participant ID (Qualtrics ResponseID)
+  condition_param: cond         # URL param holding the condition (Qualtrics randomizes)
+  fields:
+    party:  {type: category, values: [Democrat, Republican]}
+    gender: {type: category}
+    top3:   {type: list, sep: ","}        # ?top3=pizza,tacos,sushi
+    age:    {type: number}
+
+conditions:
+  cross:
+    require:                    # hard rules: ALL must hold
+      - differ: party
+      - overlap: {field: top3, min: 1}
+    prefer:                     # soft rules: among valid partners, pick best score
+      - closest: age
+    relax_after: 30s            # after this wait, drop `prefer` (and any require marked relaxable: true)
+    reveal: "You were matched because you both picked {shared.top3} in your top three."
+  same:
+    require:
+      - same: party
+    reveal: false
+
+timing:
+  match_timeout: 60s
+  chat_duration: 180s
+  min_messages: 0
+
+on_timeout: nomatch             # v1: nomatch only (`bot` is planned)
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]   # who may embed the chat + receive postMessages
+  redirect_url: null            # optional: standalone (non-iframe) mode redirect, e.g. https://x.org/done?pid={id}

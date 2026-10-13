@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat</title>
+<style>
+  :root {
+    --ink: #1f2328; --muted: #656d76; --line: #e4e7eb; --bg: #ffffff; --soft: #f5f6f8;
+    --accent: #3b5bdb; --accent-ink: #ffffff; --warn: #c92a2a; --banner: #edf2ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); }
+  #app { max-width: 680px; height: 100%; margin: 0 auto; display: flex; flex-direction: column; padding: 12px 16px; }
+  .view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .view.on { display: flex; }
+  .center { justify-content: center; align-items: center; text-align: center; gap: 6px; }
+  .center h2 { margin: 12px 0 4px; font-size: 19px; font-weight: 600; }
+  .center p { margin: 0; color: var(--muted); max-width: 420px; }
+  .pulse { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.1); } }
+  .elapsed { font-variant-numeric: tabular-nums; font-size: 13px; margin-top: 8px !important; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 2px 10px; border-bottom: 1px solid var(--line); }
+  .topbar .who { font-weight: 600; }
+  .clock { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 17px; padding: 2px 10px; border-radius: 999px; background: var(--soft); }
+  .clock.low { color: var(--warn); }
+  .banner { margin: 10px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--banner); font-size: 14px; }
+  .banner:empty { display: none; }
+  .pane { flex: 1; min-height: 200px; overflow-y: auto; padding: 14px 2px; display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 78%; padding: 8px 13px; border-radius: 16px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .msg.me { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 5px; }
+  .msg.them { align-self: flex-start; background: var(--soft); border-bottom-left-radius: 5px; }
+  .msg.sys { align-self: center; max-width: 92%; background: none; color: var(--muted); font-size: 13px; text-align: center; }
+  .composer { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .composer input { flex: 1; padding: 11px 13px; font: inherit; border: 1px solid #cfd4da; border-radius: 10px; outline: none; }
+  .composer input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 91, 219, .15); }
+  button { font: inherit; font-weight: 600; padding: 11px 20px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  #continue { margin-top: 18px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <section id="view-wait" class="view center on">
+    <div class="pulse"></div>
+    <h2 id="wait-title">Finding a conversation partner</h2>
+    <p>Please keep this page open. You will be connected as soon as another participant is ready.</p>
+    <p class="elapsed" id="elapsed"></p>
+  </section>
+
+  <section id="view-chat" class="view">
+    <div class="topbar">
+      <span class="who">Chat with another participant</span>
+      <span class="clock" id="clock">0:00</span>
+    </div>
+    <div class="banner" id="banner"></div>
+    <div class="pane" id="pane" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <input id="input" type="text" placeholder="Type a message" autocomplete="off" aria-label="Message">
+      <button id="send" type="submit">Send</button>
+    </form>
+  </section>
+
+  <section id="view-end" class="view center">
+    <h2 id="end-title">Chat complete</h2>
+    <p id="end-sub"></p>
+    <button id="continue" type="button">Continue</button>
+  </section>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(async function () {
+  const cfg = await (await fetch('/client-config.json')).json();
+  const params = Object.fromEntries(new URLSearchParams(location.search));
+  const pid = params[cfg.id_param] || '';
+  const $ = (id) => document.getElementById(id);
+
+  // Post only to a parent whose origin is on the study's allow-list.
+  const embedded = window.parent !== window;
+  const parentOrigin = (() => {
+    if (!embedded) return null;
+    let o = location.ancestorOrigins && location.ancestorOrigins[0];
+    if (!o && document.referrer) { try { o = new URL(document.referrer).origin; } catch (e) { /* none */ } }
+    return cfg.parent_origin_patterns.some((p) => new RegExp(p, 'i').test(o || '')) ? o : null;
+  })();
+  if (embedded && !parentOrigin) console.warn('syncchat: parent page origin is not in embed.allowed_origins; no messages will be sent to it');
+
+  let result = {};
+  function notify(type) {
+    if (parentOrigin) window.parent.postMessage({ source: 'syncchat', type, participant_id: pid, ...result }, parentOrigin);
+  }
+
+  function show(name) {
+    for (const v of ['wait', 'chat', 'end']) $('view-' + v).classList.toggle('on', v === name);
+  }
+  function fmt(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  function add(cls, text) {
+    const el = document.createElement('div');
+    el.className = 'msg ' + cls;
+    el.textContent = text;
+    $('pane').appendChild(el);
+    $('pane').scrollTop = $('pane').scrollHeight;
+  }
+  function finish(title, sub) {
+    clearInterval(ticker);
+    $('end-title').textContent = title;
+    $('end-sub').textContent = sub;
+    show('end');
+  }
+
+  let ticker = null;
+  const waitStart = Date.now();
+  ticker = setInterval(() => { $('elapsed').textContent = 'Waiting ' + fmt(Date.now() - waitStart); }, 500);
+
+  $('input').maxLength = cfg.max_message_length;
+  const socket = io();
+  socket.on('connect', () => { if (!result.match_id) socket.emit('join', params); });
+
+  socket.on('joinError', ({ message }) => {
+    result = { outcome: 'error', error: message };
+    finish('We could not start the chat', message);
+    notify('chat_ended');
+  });
+
+  socket.on('matched', (m) => {
+    clearInterval(ticker);
+    result = { match_id: m.match_id, waited_ms: m.waited_ms, reveal: m.reveal };
+    $('banner').textContent = m.reveal || '';
+    if (m.intro) add('sys', m.intro);
+    add('sys', 'You are now connected. Please be respectful.');
+    show('chat');
+    const clock = $('clock');
+    ticker = setInterval(() => {
+      const left = m.ends_at - Date.now();
+      clock.textContent = fmt(left);
+      clock.classList.toggle('low', left <= 30000);
+    }, 250);
+    $('input').focus();
+    notify('chat_matched');
+  });
+
+  socket.on('message', (msg) => add(msg.mine ? 'me' : 'them', msg.text));
+  socket.on('rateLimited', () => add('sys', 'You are sending messages too quickly. Please slow down.'));
+
+  socket.on('chatEnded', (e) => {
+    Object.assign(result, { outcome: e.outcome, message_count: e.message_count, met_min_messages: e.met_min_messages });
+    if (e.transcript) result.transcript = e.transcript;
+    const sub = e.outcome === 'partner_left'
+      ? 'Your partner left the conversation. Your responses have been recorded.'
+      : 'Thank you for chatting.';
+    finish(e.outcome === 'partner_left' ? 'Chat ended' : 'Chat complete', sub);
+    notify('chat_ended');
+  });
+
+  socket.on('noMatch', (e) => {
+    result = { outcome: 'nomatch', waited_ms: e.waited_ms };
+    finish('No partner was available', 'No one else is available to chat right now. You can continue with the study.');
+    notify('nomatch');
+  });
+
+  $('composer').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const text = $('input').value.trim();
+    if (!text) return;
+    socket.emit('message', text);
+    $('input').value = '';
+  });
+
+  $('continue').addEventListener('click', () => {
+    if (embedded) return notify('chat_continue');
+    if (cfg.redirect_url) {
+      location.href = cfg.redirect_url
+        .replace('{id}', encodeURIComponent(pid))
+        .replace('{outcome}', encodeURIComponent(result.outcome || ''));
+    } else {
+      $('continue').disabled = true;
+      $('end-sub').textContent = 'You can close this window.';
+    }
+  });
+})();
+</script>
+</body>
+</html>
