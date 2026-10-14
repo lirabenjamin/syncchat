@@ -25,7 +25,10 @@
   .topbar .who { font-weight: 600; }
   .clock { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 17px; padding: 2px 10px; border-radius: 999px; background: var(--soft); }
   .clock.low { color: var(--warn); }
-  .banner { margin: 10px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--banner); font-size: 14px; }
+  .banner { margin: 10px 0 0; padding: 10px 14px; border-radius: 10px; background: var(--banner); font-size: 14px; white-space: pre-line; }
+  .right { display: flex; align-items: center; gap: 8px; }
+  #done { padding: 6px 14px; font-size: 14px; }
+  .msg.divider { align-self: stretch; max-width: none; text-align: center; color: var(--muted); font-size: 13px; font-weight: 600; border-top: 1px solid var(--line); border-radius: 0; padding: 10px 0 2px; margin-top: 6px; }
   .banner:empty { display: none; }
   .pane { flex: 1; min-height: 200px; overflow-y: auto; padding: 14px 2px; display: flex; flex-direction: column; gap: 6px; }
   .msg { max-width: 78%; padding: 8px 13px; border-radius: 16px; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -52,7 +55,10 @@
   <section id="view-chat" class="view">
     <div class="topbar">
       <span class="who">Chat with another participant</span>
-      <span class="clock" id="clock">0:00</span>
+      <span class="right">
+        <button id="done" type="button" hidden>Done</button>
+        <span class="clock" id="clock">0:00</span>
+      </span>
     </div>
     <div class="banner" id="banner"></div>
     <div class="pane" id="pane" aria-live="polite"></div>
@@ -60,6 +66,12 @@
       <input id="input" type="text" placeholder="Type a message" autocomplete="off" aria-label="Message">
       <button id="send" type="submit">Send</button>
     </form>
+  </section>
+
+  <section id="view-between" class="view center">
+    <h2 id="between-title">Stage complete</h2>
+    <p id="between-sub"></p>
+    <button id="next-stage" type="button" hidden>Continue</button>
   </section>
 
   <section id="view-end" class="view center">
@@ -89,12 +101,12 @@
   if (embedded && !parentOrigin) console.warn('syncchat: parent page origin is not in embed.allowed_origins; no messages will be sent to it');
 
   let result = {};
-  function notify(type) {
-    if (parentOrigin) window.parent.postMessage({ source: 'syncchat', type, participant_id: pid, ...result }, parentOrigin);
+  function notify(type, data = result) {
+    if (parentOrigin) window.parent.postMessage({ source: 'syncchat', type, participant_id: pid, ...data }, parentOrigin);
   }
 
   function show(name) {
-    for (const v of ['wait', 'chat', 'end']) $('view-' + v).classList.toggle('on', v === name);
+    for (const v of ['wait', 'chat', 'between', 'end']) $('view-' + v).classList.toggle('on', v === name);
   }
   function fmt(ms) {
     const s = Math.max(0, Math.ceil(ms / 1000));
@@ -115,46 +127,164 @@
   }
 
   let ticker = null;
-  const waitStart = Date.now();
-  ticker = setInterval(() => { $('elapsed').textContent = 'Waiting ' + fmt(Date.now() - waitStart); }, 500);
+  function waitFor(title) {
+    clearInterval(ticker);
+    $('wait-title').textContent = title;
+    const start = Date.now();
+    ticker = setInterval(() => { $('elapsed').textContent = 'Waiting ' + fmt(Date.now() - start); }, 500);
+    show('wait');
+  }
+  waitFor('Finding a conversation partner');
+
+  // The current stage (see stageInfo in src/app.js) and how many messages I have sent in it.
+  let stage = null;
+  let myCount = 0;
+  let staged = false;
+  let ended = false;
+  const divider = (index) => add('divider', 'Stage ' + (index + 1) + ' of ' + stage.count);
+
+  function applyStage(s) {
+    stage = s;
+    staged = s.id !== null;
+    myCount = s.my_count;
+    $('banner').textContent = [s.reveal, s.prompt].filter(Boolean).join('\n');
+    clearInterval(ticker);
+    const clock = $('clock');
+    ticker = setInterval(() => {
+      if (stage.ends_at) {
+        const left = stage.ends_at - Date.now();
+        clock.textContent = fmt(left);
+        clock.classList.toggle('low', left <= 30000);
+      } else clock.textContent = fmt(Date.now() - stage.started_at) + ' elapsed';
+    }, 250);
+    renderDone();
+    show('chat');
+    $('input').focus();
+  }
+
+  // Done is shown when the stage can end early; it unlocks once I have sent min_messages.
+  function renderDone() {
+    const btn = $('done');
+    btn.hidden = !stage || stage.end_when === 'timer';
+    if (btn.hidden) return;
+    if (stage.done) {
+      btn.disabled = true;
+      btn.textContent = 'Waiting for your partner to finish';
+    } else if (myCount < stage.min_messages) {
+      btn.disabled = true;
+      btn.textContent = myCount + ' of ' + stage.min_messages + ' messages sent';
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Done';
+    }
+  }
 
   $('input').maxLength = cfg.max_message_length;
   const socket = io();
-  socket.on('connect', () => { if (!result.match_id) socket.emit('join', params); });
+  // A staged chat survives a dropped connection, so rejoin on every reconnect until it ends.
+  socket.on('connect', () => { if (!result.match_id || (staged && !ended)) socket.emit('join', params); });
 
   socket.on('joinError', ({ message }) => {
+    ended = true;
     result = { outcome: 'error', error: message };
     finish('We could not start the chat', message);
     notify('chat_ended');
   });
 
   socket.on('matched', (m) => {
-    clearInterval(ticker);
     result = { match_id: m.match_id, waited_ms: m.waited_ms, reveal: m.reveal, match_reason: m.match_reason, partner_id: m.partner_id };
-    $('banner').textContent = m.reveal || '';
     if (m.intro) add('sys', m.intro);
     add('sys', 'You are now connected. Please be respectful.');
-    show('chat');
-    const clock = $('clock');
-    ticker = setInterval(() => {
-      const left = m.ends_at - Date.now();
-      clock.textContent = fmt(left);
-      clock.classList.toggle('low', left <= 30000);
-    }, 250);
-    $('input').focus();
+    if (m.stage.count > 1) divider(0);
+    applyStage(m.stage);
     notify('chat_matched');
   });
 
-  socket.on('message', (msg) => add(msg.mine ? 'me' : 'them', msg.text));
+  // Reconnect, or the next stage after a rejoin: rebuild the whole chat.
+  socket.on('chatState', (st) => {
+    Object.assign(result, { match_id: st.match_id, partner_id: st.partner_id });
+    $('pane').textContent = '';
+    stage = st.stage;
+    if (st.intro) add('sys', st.intro);
+    let shown = -1;
+    const upTo = (i) => { while (shown < i) { shown++; if (stage.count > 1) divider(shown); } };
+    for (const x of st.transcript) {
+      upTo(x.stage_index);
+      add(x.mine ? 'me' : 'them', x.text);
+    }
+    upTo(st.stage.index);
+    if (st.partner_away) add('sys', 'Your partner lost connection. Waiting for them to come back.');
+    applyStage(st.stage);
+  });
+
+  socket.on('stageStarted', (s) => {
+    stage = s;
+    divider(s.index);
+    applyStage(s);
+  });
+
+  socket.on('stageExtended', (e) => {
+    stage.ends_at = e.ends_at;
+    add('sys', 'Time is extended until each of you has sent at least ' + e.min_messages + ' messages.');
+  });
+
+  socket.on('message', (msg) => {
+    add(msg.mine ? 'me' : 'them', msg.text);
+    if (msg.mine) {
+      myCount++;
+      renderDone();
+    }
+  });
   socket.on('rateLimited', () => add('sys', 'You are sending messages too quickly. Please slow down.'));
 
+  socket.on('doneUpdate', (d) => {
+    if (d.partner_done && !stage.partner_done) add('sys', 'Your partner is ready to finish.');
+    Object.assign(stage, d);
+    renderDone();
+  });
+  socket.on('doneRejected', (d) => {
+    stage.done = false;
+    myCount = d.sent;
+    renderDone();
+  });
+  $('done').addEventListener('click', () => {
+    stage.done = true;
+    renderDone();
+    socket.emit('done');
+  });
+
+  socket.on('partnerAway', (e) => add('sys', 'Your partner lost connection. Waiting up to ' + fmt(e.grace_ms) + ' for them to come back.'));
+  socket.on('partnerBack', () => add('sys', 'Your partner is back.'));
+
+  // A `then: qualtrics` stage ended: Qualtrics moves on, and a later chat question rejoins this partner.
+  socket.on('stageEnded', (e) => {
+    clearInterval(ticker);
+    $('between-title').textContent = 'Stage ' + (e.stage_index + 1) + ' complete';
+    const btn = $('next-stage');
+    btn.hidden = embedded;
+    if (embedded) $('between-sub').textContent = 'Please continue with the survey. You will rejoin the same partner later.';
+    else {
+      $('between-sub').textContent = 'In your study, your Qualtrics survey would show here.';
+      btn.textContent = 'Continue to stage ' + (e.stage_index + 2);
+      btn.onclick = () => { location.href = '/?' + new URLSearchParams({ ...params, stage: e.next_stage }); };
+    }
+    show('between');
+    notify('stage_ended', { ...e, advance: true });
+  });
+
+  socket.on('waitingPartner', () => waitFor('Waiting for your partner to return'));
+
   socket.on('chatEnded', (e) => {
-    Object.assign(result, { outcome: e.outcome, message_count: e.message_count, met_min_messages: e.met_min_messages });
+    ended = true;
+    Object.assign(result, { outcome: e.outcome, match_id: e.match_id, message_count: e.message_count, met_min_messages: e.met_min_messages, end_reason: e.end_reason });
+    if (e.stage) result.stage = e.stage;
     if (e.transcript) result.transcript = e.transcript;
-    const sub = e.outcome === 'partner_left'
-      ? 'Your partner left the conversation. Your responses have been recorded.'
-      : 'Thank you for chatting.';
-    finish(e.outcome === 'partner_left' ? 'Chat ended' : 'Chat complete', sub);
+    const titles = { partner_left: 'Chat ended', no_rejoin: 'Chat ended' };
+    const subs = {
+      partner_left: 'Your partner left the conversation. Your responses have been recorded.',
+      no_rejoin: 'This conversation has ended.',
+    };
+    finish(titles[e.outcome] || 'Chat complete', subs[e.outcome] || 'Thank you for chatting.');
     notify('chat_ended');
   });
 

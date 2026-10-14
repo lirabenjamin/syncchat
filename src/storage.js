@@ -3,8 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// Four record kinds, one JSONL file (or Mongo collection) each.
-const KINDS = ['arrivals', 'matches', 'messages', 'outcomes'];
+// Five record kinds, one JSONL file (or Mongo collection) each. `stages` has one record per chat stage.
+const KINDS = ['arrivals', 'matches', 'messages', 'outcomes', 'stages'];
 
 function createJsonlStorage(dir, studyId) {
   fs.mkdirSync(dir, { recursive: true });
