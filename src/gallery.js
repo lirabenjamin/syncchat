@@ -299,7 +299,7 @@ function setupTab() {
   <div class="panel">
     <h2>Step by step</h2>
     <ol class="steps">
-      ${step('Get the code', `<p>Make your own copy of the syncchat repository on GitHub: fork it, or download it and push it to a new repository. Then, on your computer:</p>
+      ${step('Get the code', `<p>Make your own copy of the <a href="https://github.com/lirabenjamin/syncchat">syncchat repository</a> on GitHub: fork it, or download the ZIP and push it to a new repository. Then, on your computer:</p>
         <pre><code>git clone https://github.com/YOUR-NAME/syncchat.git
 cd syncchat
 npm install</code></pre>`)}

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "syncchat: synchronous participant chat with configurable matching for Qualtrics studies"
+type: software
+authors:
+  - family-names: Lira
+    given-names: Benjamin
+    affiliation: "The Wharton School, University of Pennsylvania"
+    # orcid: "https://orcid.org/XXXX-XXXX-XXXX-XXXX"
+version: 0.3.0
+date-released: "2026-10-14"
+repository-code: "https://github.com/lirabenjamin/syncchat"
+url: "https://syncchat-demo.onrender.com"
+license: MIT
+keywords:
+  - behavioral science
+  - qualtrics
+  - chat
+  - experiments
+  - research tools

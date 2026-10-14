@@ -29,7 +29,8 @@ the Starter plan while collecting data; free instances sleep and restarts end li
 a free MongoDB Atlas database, and a Qualtrics account that can import `.qsf` files.
 No AI or LLM API keys are needed.
 
-1. **Install.** Clone this repo, then `npm install`.
+1. **Install.** Fork <https://github.com/lirabenjamin/syncchat> (or download the ZIP
+   and push it to a new repository), clone your copy, then `npm install`.
 2. **Write your rules.** Edit `study.yaml` (or start from a file in `examples/`). Run
    `npm run validate` until it prints `OK`.
 3. **Read them back.** `npm run explain` prints your matching logic in plain English.
@@ -56,8 +57,8 @@ No AI or LLM API keys are needed.
 8. **Test.** Preview the survey in two browsers at once. Each preview gets its own
    ResponseID, so the two can match.
 
-The Deploy button only works for repos Render can read. If this repo is private,
-fork or copy it into your own account first.
+The Deploy button deploys this public repo as is. To use your own rules, fork it first
+and deploy your fork.
 
 ## Writing matching rules
 
@@ -427,3 +428,13 @@ npm run qualtrics -- [config] --url https://your-app.onrender.com [--out DIR]
 
 `qualtrics/generated/` is gitignored: it depends on your app URL, so regenerate it
 rather than committing it.
+
+## Citing syncchat
+
+If you use syncchat in published research, please cite it. The citation metadata is in
+[`CITATION.cff`](CITATION.cff); GitHub's "Cite this repository" button turns it into
+APA or BibTeX. A DOI will come with the first Zenodo-archived release.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
