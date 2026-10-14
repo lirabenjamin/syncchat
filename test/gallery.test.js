@@ -14,7 +14,7 @@ const { explainConfig } = require('../src/explain');
 const { ANATOMY_YAML } = require('../src/gallery');
 
 const galleryDir = path.join(__dirname, '..', 'examples', 'gallery');
-const IDS = ['shared-interest', 'cross-party', 'same-vs-cross', 'opposing-views', 'similar-age-relax', 'advice-pairs', 'combo'];
+const IDS = ['shared-interest', 'cross-party', 'same-vs-cross', 'opposing-views', 'similar-age-relax', 'advice-pairs', 'combo', 'untimed-min-messages', 'two-stage'];
 
 let app, url, dataDir;
 const sockets = [];
@@ -117,7 +117,7 @@ test('setup tab: accounts, every env var the code reads, ordered steps, troubles
 
 test('example cards show the URL Qualtrics sends', async () => {
   const html = await (await fetch(url + '/')).text();
-  assert.strictEqual(html.match(/<span class="label">What Qualtrics sends/g).length, 7);
+  assert.strictEqual(html.match(/<span class="label">What Qualtrics sends/g).length, 9);
   for (const { config } of loadStudyDir(galleryDir)) {
     const card = html.slice(html.indexOf(`<article class="card" id="${config.study.id}"`));
     const sends = card.slice(card.indexOf('<code class="url">'), card.indexOf('</code>', card.indexOf('<code class="url">')));
@@ -152,7 +152,7 @@ test('gallery lists all studies with explanation, YAML, and a Try it link', asyn
     const res = await fetch(url + route);
     assert.strictEqual(res.status, 200);
     const html = await res.text();
-    assert.strictEqual(html.match(/<article class="card"/g).length, 7);
+    assert.strictEqual(html.match(/<article class="card"/g).length, 9);
     for (const id of IDS) assert.match(html, new RegExp(`href="/demo\\?study=${id}">Try it`));
     assert.match(html, /Open a card in two tabs or two phones/);
     assert.match(html, /partners must NOT have stance within 2 of each other/); // explain output

@@ -11,11 +11,11 @@ const tag = () => `live-${Math.random().toString(36).slice(2, 8)}`;
 // Connect like a top-level browser tab on the app's own origin.
 const joinLive = (params) => join(url, params, { origin: new URL(url).origin });
 
-test('live: gallery lists all 7 studies', opts, async () => {
+test('live: gallery lists all 9 studies', opts, async () => {
   const health = await (await fetch(`${url}/healthz`)).json();
   assert.strictEqual(health.ok, true);
   const html = await (await fetch(`${url}/`)).text();
-  assert.strictEqual(html.match(/<article class="card"/g).length, 7);
+  assert.strictEqual(html.match(/<article class="card"/g).length, 9);
 });
 
 for (const c of matches) {

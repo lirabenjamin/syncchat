@@ -269,7 +269,7 @@
       btn.onclick = () => { location.href = '/?' + new URLSearchParams({ ...params, stage: e.next_stage }); };
     }
     show('between');
-    notify('stage_ended', { ...e, advance: true });
+    notify('stage_ended', e);
   });
 
   socket.on('waitingPartner', () => waitFor('Waiting for your partner to return'));
@@ -277,7 +277,7 @@
   socket.on('chatEnded', (e) => {
     ended = true;
     Object.assign(result, { outcome: e.outcome, match_id: e.match_id, message_count: e.message_count, met_min_messages: e.met_min_messages, end_reason: e.end_reason });
-    if (e.stage) result.stage = e.stage;
+    if (e.stage) Object.assign(result, { stage: e.stage, stage_message_count: e.stage_message_count, stage_met_min_messages: e.stage_met_min_messages });
     if (e.transcript) result.transcript = e.transcript;
     const titles = { partner_left: 'Chat ended', no_rejoin: 'Chat ended' };
     const subs = {

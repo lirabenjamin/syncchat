@@ -192,7 +192,7 @@ function createStudy({ config, storage, log }) {
       if (s.counts.get(m) < s.def.min_messages) room.metAll.set(m, false);
     }
     const perMember = (f) => Object.fromEntries(room.members.map((m) => [m.pid, f(m)]));
-    storage.record('stages', {
+    if (room.def.staged) storage.record('stages', {
       match_id: room.id,
       condition: room.cond,
       stage: s.def.id,
@@ -236,7 +236,11 @@ function createStudy({ config, storage, log }) {
       const outcome = outcomeOf(m);
       const extra = {
         match_id: room.id, message_count: room.totals.get(m), met_min_messages: room.metAll.get(m), end_reason: endReason,
-        ...(staged ? { stage: room.stage.def.id } : {}),
+        ...(staged ? {
+          stage: room.stage.def.id,
+          stage_message_count: room.stage.counts.get(m),
+          stage_met_min_messages: room.stage.counts.get(m) >= room.stage.def.min_messages,
+        } : {}),
       };
       recordOutcome(m, outcome, extra);
       const payload = {
