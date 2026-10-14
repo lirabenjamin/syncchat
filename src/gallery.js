@@ -53,6 +53,37 @@ const ANATOMY = [
 ];
 const ANATOMY_YAML = ANATOMY.map(([l]) => l).join('\n') + '\n';
 
+// The annotated timing and stages example on the Configuration tab (validated when the page renders).
+const STAGES_YAML = `conditions:
+  short:
+    timing: {chat_duration: 2m}        # this condition only: a 2-minute chat
+  open:
+    timing:
+      chat_duration: none              # no clock: elapsed timer and a Done button
+      end_when: both_done              # or either_done; timed chats default to timer
+      min_messages: 3                  # Done stays locked until you have sent 3
+      max_duration: 20m                # safety cap (default 60m)
+  staged:
+    stages:                            # same partner throughout
+      - id: intro
+        prompt: "Get to know each other."
+        chat_duration: 3m
+        then: qualtrics                # survey questions, then rejoin with stage=discuss
+      - id: discuss
+        prompt: "Discuss the topic."
+        chat_duration: none
+        min_messages: 2
+
+timing:                                # global defaults
+  match_timeout: 120s
+  chat_duration: 5m
+  rejoin_timeout: 3m                   # chats with stages: wait this long for a returning partner
+
+study: {id: timing-demo}                # study, participant, and embed as in the example above
+participant: {}
+embed: {allowed_origins: ["https://*.qualtrics.com"]}
+`;
+
 // Fake arrivals for the simulate sample, as they would appear in people.csv.
 const PEOPLE_CSV = `id,cond,party,top3,age,arrival_s
 p1,cross,Democrat,"coffee,hiking,jazz",34,0
@@ -71,7 +102,7 @@ const NOTES = [
   '<b>prefer</b>: among everyone who passes <code>require</code>, rank partners. The first rule decides, later ones break ties, then longest wait wins.',
   '<b>relax_after</b>: once someone has waited this long, rules marked <code>relaxable: true</code> are dropped for them, and preferences are ignored (they take the first valid partner).',
   '<b>reveal</b>: the "why you matched" banner both people see when the chat opens, filled in with placeholders (table below). <code>false</code> shows no banner.',
-  '<b>timing</b>: how long to wait for a partner before a "no partner" screen, and how long the chat lasts.',
+  '<b>timing</b>: how long to wait for a partner before a "no partner" screen, and how long the chat lasts. A condition can override any of it, and a chat can have no time limit or several stages (see <a href="#timing-and-stages">Timing and stages</a>).',
   '<b>chat.intro</b>: a line pinned at the top of the chat, usually the topic.',
   '<b>embed</b>: the sites allowed to show the chat in an iframe (your Qualtrics domain). Optional <code>redirect_url</code> is where Continue goes if the chat is opened outside Qualtrics.',
 ];
@@ -113,9 +144,20 @@ const SETTINGS = [
   ['conditions.&lt;name&gt;.label', 'the name', 'text in the <code>/demo</code> condition dropdown'],
   ['conditions.&lt;name&gt;.relax_after', 'none', 'must be shorter than <code>timing.match_timeout</code>'],
   ['conditions.&lt;name&gt;.reveal', 'false', 'banner text with placeholders, or <code>false</code>'],
+  ['conditions.&lt;name&gt;.timing', 'none', 'any <code>timing</code> key, for this condition only; it overrides the global value'],
+  ['conditions.&lt;name&gt;.stages', 'stages', 'this condition\'s own stages; otherwise it uses the top-level <code>stages</code>, if any'],
   ['timing.match_timeout', 'required', 'how long to wait for a partner (<code>60s</code>, <code>2m</code>, <code>500ms</code>, or a number of seconds)'],
-  ['timing.chat_duration', 'required', 'length of the chat'],
-  ['timing.min_messages', '0', 'recorded as <code>met_min_messages</code> per person; it does not end the chat early'],
+  ['timing.chat_duration', 'required', 'length of the chat, or <code>none</code> for no time limit: an elapsed timer and a Done button replace the countdown'],
+  ['timing.end_when', 'timer', '<code>timer</code> (time runs out), <code>both_done</code> (both click Done; the first sees "Waiting for your partner to finish"), or <code>either_done</code>. Default <code>both_done</code> when <code>chat_duration</code> is <code>none</code>'],
+  ['timing.min_messages', '0', 'messages each person must send. With Done, the server rejects Done until then and the button shows "2 of 3 messages sent"; with <code>timer</code>, it is recorded as <code>met_min_messages</code>'],
+  ['timing.max_duration', '60m', 'safety cap on a chat with <code>chat_duration: none</code>'],
+  ['timing.extend_until_min', '0', 'timed chats: if someone has sent fewer than <code>min_messages</code> when time runs out, keep going up to this long until both have'],
+  ['timing.rejoin_timeout', '3m', 'chats with stages: how long a returning or reconnecting partner is waited for before the chat ends (<code>partner_left</code>)'],
+  ['stages', 'none', 'a list of stages run in order with the same partner; each may set <code>chat_duration</code>, <code>min_messages</code>, <code>end_when</code>, <code>max_duration</code>, <code>extend_until_min</code>'],
+  ['stages[].id', 'required', 'letters, numbers, or <code>_</code>; stored on messages and stage records, and sent as <code>stage=</code> by later chat questions'],
+  ['stages[].prompt', 'none', 'banner for this stage; placeholders allowed'],
+  ['stages[].reveal', 'stage 1 only', 'the condition\'s <code>reveal</code> shows in stage 1; a stage may set its own'],
+  ['stages[].then', 'continue', '<code>continue</code>: next stage in the same window, after a divider; <code>qualtrics</code>: the survey moves on and a later chat question rejoins the same partner. The last stage has no <code>then</code>'],
   ['chat.intro', 'none', 'a line at the top of every chat; placeholders allowed'],
   ['on_timeout', 'nomatch', 'what happens after <code>match_timeout</code>: the "no partner" screen (the only option today)'],
   ['embed.allowed_origins', 'required', 'sites allowed to embed the chat and receive its messages, e.g. <code>https://*.qualtrics.com</code>'],
@@ -199,6 +241,15 @@ function configurationTab() {
     <p>The validator rejects unknown keys, unknown fields, wrong field types, and bad durations, and lists every problem at once.</p>
   </div>
 
+  <div class="panel" id="timing-and-stages">
+    <h2>Timing and stages</h2>
+    <p>Global <code>timing</code> applies to every condition; a condition's <code>timing</code> overrides it, and a stage overrides both. A chat without a clock ends when partners click Done, and <code>stages</code> run several rounds with the same partner:</p>
+    <pre><code>${highlightYaml(STAGES_YAML)}</code></pre>
+    <p><code>npm run explain</code> reads it back as:</p>
+    <pre class="out"><code>${esc(explainConfig(validateConfig(yaml.load(STAGES_YAML))).split('\n').slice(3).join('\n').trim())}</code></pre>
+    <p>With <code>then: qualtrics</code>, your survey needs one chat block per stage (<code>npm run qualtrics</code> writes a chat question for each; see <a href="#setup">Setup</a>, step 6). Whoever reaches the next chat question first waits for the partner, up to <code>rejoin_timeout</code>. A reload or dropped connection mid-stage reconnects to the same chat with its transcript. Outside Qualtrics (the <b>Try it</b> page), a <code>qualtrics</code> stage shows "In your study, your Qualtrics survey would show here" and a button to continue with the same partner.</p>
+  </div>
+
   <div class="panel">
     <h2>Adding your own rule</h2>
     <p>Put a rule in a JavaScript file next to your study.yaml and point to it with <code>custom</code>. The file exports a plain-English <code>describe</code> (it completes "partners must ...") and a <code>test</code> that checks one pair and returns <code>{pass}</code>:</p>
@@ -269,12 +320,13 @@ npm run simulate study.yaml examples/people.csv   # edit or replace the CSV to m
       ${step('Test the live app', `<p>Open <code>https://YOUR-APP.onrender.com/demo</code> in two browser tabs or on two phones, give compatible answers, and check that you get matched, see the reveal banner, and can chat.</p>`)}
       ${step('Add the chat to Qualtrics', `<p>Generate the Qualtrics files with your app's address:</p>
         <pre><code>npm run qualtrics -- --url https://YOUR-APP.onrender.com</code></pre>
-        <p>This writes four files to <code>qualtrics/generated/</code>: <code>syncchat_template.qsf</code>, <code>chat-question.html</code>, <code>chat-question.js</code>, and <code>CHECKLIST.md</code>. Nothing in them needs editing. Then either:</p>
+        <p>This writes four files to <code>qualtrics/generated/</code>: <code>syncchat_template.qsf</code>, <code>chat-question.html</code>, <code>chat-question.js</code>, and <code>CHECKLIST.md</code> (plus one chat question per later stage, for chats with stages). Nothing in them needs editing. Then either:</p>
         <ul>
           <li><b>Import the template</b> (new survey): <b>Create a new project &rarr; Survey &rarr; Import a QSF file</b>. It already has the embedded data fields, a randomizer that sets <code>cond</code> evenly across your conditions, the chat question, and a block for post-chat questions. Add your own questions before the chat block and, in Survey Flow, set each matching field (e.g. <code>party</code>) from the matching answer with piped text.</li>
           <li><b>Add it to an existing survey</b>: at the top of Survey Flow add the embedded data fields listed in <code>CHECKLIST.md</code>; below them a Randomizer ("Randomly present 1", "Evenly present elements") with one Embedded Data element per condition (<code>cond = cross</code>, <code>cond = same</code>, ...); then a Text/Graphic question on its own page whose HTML is <code>chat-question.html</code> and whose JavaScript is <code>chat-question.js</code>.</li>
         </ul>
-        <p>The chat iframe sends <code>study</code>, the ResponseID as <code>id</code>, <code>cond</code>, and your fields (see "What Qualtrics sends" on each example). Re-run the command whenever you change fields or conditions.</p>`)}
+        <p>The chat iframe sends <code>study</code>, the ResponseID as <code>id</code>, <code>cond</code>, and your fields (see "What Qualtrics sends" on each example). Re-run the command whenever you change fields or conditions.</p>
+        <p><b>Chats with stages:</b> if a stage has <code>then: qualtrics</code>, add <b>one chat block per stage</b>, with your between-stage questions in blocks between them. The command writes <code>chat-question-2.js</code> (and so on) for the later chat blocks, which send <code>stage=&lt;id&gt;</code> and reunite the same partners; the template already has these blocks. Each stage's result is saved as <code>chat_&lt;stage&gt;_end_reason</code>, <code>chat_&lt;stage&gt;_message_count</code>, and <code>chat_&lt;stage&gt;_met_min_messages</code>.</p>`)}
       ${step('Pilot', `<p>Preview the survey in two browser windows at the same time (for example one normal and one private window). Each preview gets its own ResponseID, so the two can match. Check that the chat appears, that you match, and that <code>chat_outcome</code> and <code>chat_match_id</code> show up in the Qualtrics data and in the export (step 9).</p>`)}
       ${step('Recruit', `<ul>
         <li><b>Launch in bursts</b> so people arrive together: open a batch of slots at a set time (or schedule sessions) rather than trickling participants in over a day.</li>
@@ -284,7 +336,7 @@ npm run simulate study.yaml examples/people.csv   # edit or replace the CSV to m
         <li><b>Expect drop-outs</b>: some partners leave mid-chat (<code>partner_left</code>). Decide your exclusion rules before launch.</li>
         <li><b>Do not redeploy during a session</b>: a restart ends every live chat.</li>
         </ul>`)}
-      ${step('Download the data', `<p>Open <code>https://YOUR-APP.onrender.com/export?token=YOUR_ADMIN_TOKEN</code> for all four tables as JSON: <code>arrivals</code>, <code>matches</code>, <code>messages</code>, <code>outcomes</code>. For one table as CSV, add <code>&amp;format=csv&amp;table=messages</code> (or any of the four). On a server hosting several studies, add <code>&amp;study=STUDY_ID</code>. Merge with Qualtrics on the participant ID (the ResponseID) or <code>chat_match_id</code>. The same records are in your Atlas database.</p>`)}
+      ${step('Download the data', `<p>Open <code>https://YOUR-APP.onrender.com/export?token=YOUR_ADMIN_TOKEN</code> for all five tables as JSON: <code>arrivals</code>, <code>matches</code>, <code>messages</code>, <code>outcomes</code>, and <code>stages</code> (one record per chat stage, for studies with stages; messages and outcomes then carry a <code>stage</code> too). For one table as CSV, add <code>&amp;format=csv&amp;table=messages</code> (or any of the five). On a server hosting several studies, add <code>&amp;study=STUDY_ID</code>. Merge with Qualtrics on the participant ID (the ResponseID) or <code>chat_match_id</code>. The same records are in your Atlas database.</p>`)}
       ${step('IRB and privacy', `<ul>
         <li>Chat transcripts are stored in your own MongoDB database and pass through your own Render server. No data goes to the syncchat authors.</li>
         <li>Chat text is free text and can contain identifying information. Treat transcripts as identifiable until reviewed.</li>

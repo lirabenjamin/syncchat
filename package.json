@@ -1,6 +1,6 @@
 {
   "name": "syncchat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Synchronous participant-to-participant chat for Qualtrics studies, with matching rules in one YAML file",
   "main": "src/index.js",
   "private": true,

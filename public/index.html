@@ -195,8 +195,9 @@
     result = { match_id: m.match_id, waited_ms: m.waited_ms, reveal: m.reveal, match_reason: m.match_reason, partner_id: m.partner_id };
     if (m.intro) add('sys', m.intro);
     add('sys', 'You are now connected. Please be respectful.');
-    if (m.stage.count > 1) divider(0);
-    applyStage(m.stage);
+    stage = m.stage;
+    if (stage.count > 1) divider(0);
+    applyStage(stage);
     notify('chat_matched');
   });
 

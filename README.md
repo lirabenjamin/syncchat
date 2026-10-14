@@ -234,8 +234,14 @@ relaxing, so write the sentence to survive that, or keep that rule strict.
 | Setting | Default | Meaning |
 |---|---|---|
 | `timing.match_timeout` | required | how long to wait for a partner (`60s`, `2m`, `500ms`) |
-| `timing.chat_duration` | required | length of the chat |
-| `timing.min_messages` | 0 | recorded as `met_min_messages` per person; it does not end the chat early |
+| `timing.chat_duration` | required | length of the chat, or `none` for no time limit (elapsed timer and a Done button) |
+| `timing.end_when` | `timer` (`both_done` if untimed) | `timer`, `both_done` (both click Done), or `either_done` |
+| `timing.min_messages` | 0 | messages each person must send; with Done, enforced by the server; with `timer`, recorded as `met_min_messages` |
+| `timing.max_duration` | 60m | safety cap on an untimed chat |
+| `timing.extend_until_min` | 0 | timed chats: run up to this much longer until both have sent `min_messages` |
+| `timing.rejoin_timeout` | 3m | chats with stages: how long a returning or reconnecting partner is waited for |
+| `conditions.<name>.timing` | none | any `timing` key for this condition; overrides the global value |
+| `stages` / `conditions.<name>.stages` | none | several rounds with the same partner (below) |
 | `chat.intro` | none | a line shown at the top of every chat, e.g. the topic; placeholders allowed |
 | `on_timeout` | `nomatch` | only `nomatch` in v1; a `bot` fallback partner is planned |
 | `embed.allowed_origins` | required | sites allowed to embed the chat and receive its messages |
@@ -247,6 +253,56 @@ relaxing, so write the sentence to survive that, or keep that rule strict.
 
 The validator rejects unknown keys, unknown fields, wrong field types, and bad
 durations, and lists every problem at once.
+
+### Timing and stages
+
+Global `timing` applies to every condition; a condition's `timing` overrides it, and a
+stage overrides both. Settings that can never apply (e.g. `max_duration` on a timed chat)
+are rejected.
+
+```yaml
+conditions:
+  short:
+    timing: {chat_duration: 2m}      # this condition only
+  open:
+    timing:
+      chat_duration: none            # no clock: elapsed timer + Done button
+      end_when: both_done            # default when untimed; the first to click sees
+                                     # "Waiting for your partner to finish"; or either_done
+      min_messages: 3                # Done is rejected (server-side) until you have sent 3;
+                                     # the button reads "2 of 3 messages sent"
+      max_duration: 20m              # safety cap (default 60m)
+  staged:
+    reveal: "Your partner is a {partner.party}."   # stage 1 only, unless a stage sets reveal
+    stages:                          # or top-level `stages:`, inherited by every condition
+      - id: intro                    # letters, numbers, _; stored on messages and records
+        prompt: "Get to know each other."          # banner for this stage
+        chat_duration: 3m            # stage keys: chat_duration, min_messages, end_when,
+                                     # max_duration, extend_until_min
+        then: qualtrics              # continue (default): same window, after a divider
+                                     # qualtrics: survey moves on; rejoin with stage=discuss
+      - id: discuss                  # the last stage has no `then`
+        prompt: "Discuss the topic."
+        chat_duration: none
+        min_messages: 2
+
+timing:
+  match_timeout: 120s
+  chat_duration: 5m
+  extend_until_min: 0                # timed chats: extend until both reach min_messages
+  rejoin_timeout: 3m                 # wait this long for a returning partner, then partner_left
+```
+
+With `then: qualtrics`, the chat posts `stage_ended` to Qualtrics, which moves to your
+between-stage questions. The next chat block's question sends `stage=<id>` with the same
+participant ID and rejoins the same partner (the pair stays reserved). Whoever arrives
+first waits up to `rejoin_timeout`; if the other never comes, the chat ends with
+`partner_left` (and `no_rejoin` for the absent one). A reload or dropped connection
+mid-stage reconnects to the same chat with its transcript. `npm run qualtrics` writes one
+chat question per Qualtrics stage (`chat-question-2.js`, ...) and a template with one chat
+block per stage separated by a placeholder question; later chat questions skip themselves
+if the chat already ended. Outside Qualtrics (`/demo`), a `qualtrics` stage shows "In your
+study, your Qualtrics survey would show here" and a button that rejoins the same partner.
 
 ### Example configs
 
@@ -289,7 +345,7 @@ cannot be a field name. `/` and `/gallery` show the tabbed page: the studies as 
 the description, the `npm run explain` text, the raw YAML, and a "Try it" link, plus the
 Configuration and Setup guides. Single-file mode is unchanged and ignores `study=`.
 
-`examples/gallery/` holds seven pairing dynamics for demos:
+`examples/gallery/` holds nine designs for demos:
 
 | Study | Dynamic |
 |---|---|
@@ -300,6 +356,8 @@ Configuration and Setup guides. Single-file mode is unchanged and ignores `study
 | `similar-age-relax` | within 10 years of age, closest first; the age rule drops after 30s of waiting |
 | `advice-pairs` | a seeker meets a giver on the same topic; two seekers never match |
 | `combo` | cross-party AND (shared interest OR within 5 years) AND NOT the same gender |
+| `untimed-min-messages` | a 2-minute chat vs. an untimed chat that ends when both click Done, after 3 messages each |
+| `two-stage` | 3 minutes getting to know each other, survey questions, then the same partner discusses a topic until both are done |
 
 ```bash
 STUDY_CONFIG=examples/gallery npm start   # then open http://localhost:3000 in two tabs or devices
@@ -314,7 +372,8 @@ snippet only accepts messages from your app URL, and the app only posts to origi
 | Message | When | Embedded data saved |
 |---|---|---|
 | `chat_matched` | a partner is found | `chat_match_id`, `chat_partner_id`, `chat_match_reason`, `chat_reveal`, `chat_waited_ms` |
-| `chat_ended` | timer ends, partner leaves, or join error | `chat_outcome`, `chat_message_count`, `chat_met_min_messages`, `chat_end_ts` |
+| `chat_ended` | timer ends, Done, partner leaves, or join error | `chat_outcome`, `chat_message_count`, `chat_met_min_messages`, `chat_end_ts`; with stages, also the last stage's `chat_<stage>_*` |
+| `stage_ended` | a `then: qualtrics` stage ends | `chat_<stage>_end_reason`, `chat_<stage>_message_count`, `chat_<stage>_met_min_messages` (then clicks Next) |
 | `nomatch` | no partner within `match_timeout` | same as `chat_ended`, with `chat_outcome = nomatch` |
 | `chat_continue` | participant clicks Continue in the chat | (clicks Next) |
 
@@ -323,15 +382,16 @@ participants to a different block.
 
 ## Data
 
-Each record carries `study_id`. With `MONGO_URI`, records go to four collections;
-otherwise to four files in `./data/`.
+Each record carries `study_id`. With `MONGO_URI`, records go to five collections;
+otherwise to five files in `./data/`.
 
 | Record | Contents |
 |---|---|
 | `arrivals` | participant ID, condition, parsed fields, arrival time |
 | `matches` | match ID, both IDs (earlier arrival first), condition, rules satisfied, rules waived by relaxing, `prefer` rules used and their scores, reveal text per person, wait time per person |
-| `messages` | match ID, sender ID, sequence number, text, time |
-| `outcomes` | one per person: `completed`, `partner_left`, `left`, `nomatch`, or `left_waiting`, plus message count and `met_min_messages` |
+| `messages` | match ID, sender ID, sequence number, text, time, and `stage` in a chat with stages |
+| `outcomes` | one per person: `completed`, `partner_left`, `left`, `no_rejoin`, `nomatch`, or `left_waiting`, plus message count, `met_min_messages`, `end_reason` (`timer`, `both_done`, `either_done`, `max_duration`, `min_reached`, `left`, `no_rejoin`), and the last `stage` |
+| `stages` | chats with stages: one per stage with start/end time, end reason, per-person message counts and `met_min_messages`, and who clicked Done |
 
 Download everything with `GET /export?token=ADMIN_TOKEN` (JSON), or one table as CSV
 with `/export?token=ADMIN_TOKEN&format=csv&table=messages`. Merge with Qualtrics on

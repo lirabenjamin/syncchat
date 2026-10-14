@@ -368,3 +368,19 @@ test('qualtrics generator: one chat question per Qualtrics stage, per-stage embe
   }
 });
 
+
+test('gallery documents timing and stages: settings, annotated YAML with explain output, and the Qualtrics stage blocks', () => {
+  const { renderGallery } = require('../src/gallery');
+  const { loadStudyDir } = require('../src/config');
+  const html = renderGallery(loadStudyDir(path.join(root, 'examples', 'gallery')));
+  const conf = html.slice(html.indexOf('<section id="configuration"'), html.indexOf('<section id="setup"'));
+  for (const k of ['conditions.&lt;name&gt;.timing', 'conditions.&lt;name&gt;.stages', 'timing.end_when', 'timing.max_duration',
+    'timing.extend_until_min', 'timing.rejoin_timeout', 'stages', 'stages[].id', 'stages[].prompt', 'stages[].reveal', 'stages[].then']) {
+    assert.ok(conf.includes(`<td><code>${k}</code></td>`), k);
+  }
+  assert.match(conf, /<h2>Timing and stages<\/h2>/);
+  assert.match(conf, /Stage 1 &quot;intro&quot; lasts 3m/);
+  const setup = html.slice(html.indexOf('<section id="setup"'));
+  assert.match(setup, /<b>one chat block per stage<\/b>/);
+  assert.match(setup, /all five tables/);
+});

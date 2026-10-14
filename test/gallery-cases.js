@@ -33,7 +33,7 @@ const nonMatches = [
 function join(url, params, { origin } = {}) {
   const socket = connect(url, { forceNew: true, extraHeaders: origin ? { origin } : {} });
   const queues = {};
-  for (const ev of ['waiting', 'matched', 'noMatch', 'joinError', 'message']) {
+  for (const ev of ['waiting', 'matched', 'noMatch', 'joinError', 'message', 'chatEnded', 'stageEnded', 'chatState', 'waitingPartner', 'doneUpdate']) {
     queues[ev] = [];
     socket.on(ev, (p) => queues[ev].push(p));
   }
