@@ -67,6 +67,7 @@ test('qualtrics generator: filled-in JS/HTML/checklist and an importable QSF', (
       const js = read('chat-question.js');
       assert.ok(js.includes('"https://my-study.onrender.com"'), `${f}: origin filled in`);
       assert.ok(js.includes(`"${c.participant.condition_param}": "\${e://Field/${c.participant.condition_param}}"`));
+      assert.ok(js.includes(`"study": "${c.study.id}"`), `${f}: iframe URL sends study=`);
       for (const field of Object.keys(c.participant.fields)) {
         assert.ok(js.includes(`"${field}": "\${e://Field/${field}}"`), `${f}: field ${field}`);
         assert.ok(read('CHECKLIST.md').includes(`\`${field}\``), `${f}: checklist lists ${field}`);

@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { loadConfig, ConfigError } = require('./config');
+const { loadConfig, loadStudyDir, ConfigError } = require('./config');
 const { createStorage } = require('./storage');
 const { createApp } = require('./app');
 
@@ -11,10 +11,12 @@ const envFile = path.join(root, '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
 async function main() {
-  const configFile = process.argv[2] || process.env.STUDY_CONFIG || path.join(root, 'study.yaml');
-  let config;
+  // A folder (STUDY_DIR, or STUDY_CONFIG pointing at a folder) hosts every study in it, with a gallery at /.
+  const target = process.argv[2] || process.env.STUDY_DIR || process.env.STUDY_CONFIG || path.join(root, 'study.yaml');
+  const multi = fs.existsSync(target) && fs.statSync(target).isDirectory();
+  let loaded;
   try {
-    config = loadConfig(configFile);
+    loaded = multi ? loadStudyDir(target) : [{ config: loadConfig(target) }];
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(e.message);
@@ -23,19 +25,24 @@ async function main() {
     throw e;
   }
 
-  const storage = await createStorage({
-    mongoUri: process.env.MONGO_URI,
-    dataDir: process.env.DATA_DIR || path.join(root, 'data'),
-    studyId: config.study.id,
-  });
-  const app = createApp({ config, storage });
+  const studies = [];
+  for (const s of loaded) {
+    const storage = await createStorage({
+      mongoUri: process.env.MONGO_URI,
+      dataDir: process.env.DATA_DIR || path.join(root, 'data'),
+      studyId: s.config.study.id,
+    });
+    studies.push({ ...s, storage });
+  }
+  const app = multi ? createApp({ studies }) : createApp(studies[0]);
   const port = await app.listen(Number(process.env.PORT) || 3000);
-  console.log(`syncchat: study "${config.study.id}" listening on port ${port} (storage: ${storage.backend})`);
+  const ids = studies.map((s) => s.config.study.id).join('", "');
+  console.log(`syncchat: ${multi ? 'studies' : 'study'} "${ids}" listening on port ${port} (storage: ${studies[0].storage.backend})`);
   if (!process.env.ADMIN_TOKEN) console.log('syncchat: ADMIN_TOKEN not set, /export is disabled');
 
   const shutdown = async () => {
     await app.close();
-    await storage.close();
+    await Promise.all(studies.map((s) => s.storage.close()));
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

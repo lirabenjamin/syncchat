@@ -7,7 +7,7 @@ const { formGroup } = require('./matcher');
 // simulation runs exactly the matching logic participants will get.
 //   clock      { now(), setTimer(fn, ms) -> handle, clearTimer(handle) }
 //   onMatch    ({ cond, members, satisfied, waived, shared, scores, prefer, at }) once a group forms
-//   onTimeout  (entry, waitedMs) when someone waits match_timeout without a partner
+//   onTimeout  (entry, waitedMs) when someone waits their condition's match_timeout without a partner
 // An entry is any object with { cond, fields }; the lobby sets entry.arrivedAt.
 function createLobby(config, { clock, onMatch, onTimeout }) {
   const waiting = Object.fromEntries(Object.keys(config.conditions).map((c) => [c, []]));
@@ -39,7 +39,7 @@ function createLobby(config, { clock, onMatch, onTimeout }) {
     entry.timeoutTimer = clock.setTimer(() => {
       remove(entry);
       onTimeout(entry, clock.now() - entry.arrivedAt);
-    }, config.timing.match_timeout_ms);
+    }, config.conditions[entry.cond].timing.match_timeout_ms);
   }
 
   return {

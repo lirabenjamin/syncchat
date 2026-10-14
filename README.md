@@ -21,7 +21,13 @@ attribute-based chat pairing, and generates every Qualtrics piece from your conf
 
 ## Quickstart (about 15 minutes)
 
-You need Node.js 20.12 or newer and a Qualtrics account that can import `.qsf` files.
+The **Setup** tab of the live demo, <https://syncchat-demo.onrender.com/#setup>, walks
+through these steps in more detail, with accounts, costs, and every setting.
+
+You need Node.js 20.12 or newer, a GitHub account, a Render account (about $7/month on
+the Starter plan while collecting data; free instances sleep and restarts end live chats),
+a free MongoDB Atlas database, and a Qualtrics account that can import `.qsf` files.
+No AI or LLM API keys are needed.
 
 1. **Install.** Clone this repo, then `npm install`.
 2. **Write your rules.** Edit `study.yaml` (or start from a file in `examples/`). Run
@@ -31,12 +37,17 @@ You need Node.js 20.12 or newer and a Qualtrics account that can import `.qsf` f
 4. **Simulate.** `npm run simulate study.yaml examples/people.csv` runs the real
    matcher on fake arrivals and prints who matched, why, how long they waited, and
    the match rate. Edit `people.csv` to look like your sample.
-5. **Deploy.** Copy `.env.example` to `.env` and set `ADMIN_TOKEN`. Click "Deploy to
-   Render" (or create a Render Web Service; `render.yaml` holds the settings) and set
-   `ADMIN_TOKEN` and `MONGO_URI` in the dashboard. Render wipes its disk on restart,
-   so use MongoDB there. Check `https://your-app.onrender.com/healthz`.
+5. **Deploy.** In MongoDB Atlas, create a free cluster, a database user, and network
+   access from `0.0.0.0/0`; copy the connection string from Connect > Drivers and add a
+   database name (`.../syncchat?...`). That is `MONGO_URI`. In Render, create a
+   Blueprint from your repo (`render.yaml` holds the settings and generates
+   `ADMIN_TOKEN`) or click "Deploy to Render", and set `MONGO_URI`. Render wipes its
+   disk on restart, so use MongoDB there. Check `https://your-app.onrender.com/healthz`
+   shows `"storage":"mongo"`.
 6. **Generate the Qualtrics files.** `npm run qualtrics -- --url https://your-app.onrender.com`
-   writes `qualtrics/generated/`.
+   writes `qualtrics/generated/`. The chat URL always includes `study=<study.id>`;
+   a single-study server ignores it, so the same files keep working if you later host
+   several studies on one server.
 7. **Import.** In Qualtrics, create a project from `syncchat_template.qsf`, add your
    own questions before the chat block, and set each matching field from them. The
    generated `CHECKLIST.md` lists every embedded-data field and where its value comes
@@ -50,6 +61,21 @@ fork or copy it into your own account first.
 
 ## Writing matching rules
 
+The flow: Qualtrics survey → embedded data → chat iframe URL → syncchat matches by your
+rules → chat → outcome, match reason, and partner ID back to Qualtrics as embedded data.
+
+Everything syncchat matches on arrives in the iframe URL, which the generated Qualtrics
+snippet builds from embedded data, for example `?id=R_abc123&cond=cross&party=Democrat`:
+
+- `id` is the Qualtrics ResponseID.
+- `cond` is the condition, set by a randomizer in the survey flow (`participant.condition_param`).
+- every other parameter is a field from `participant.fields`, which you collect in the
+  survey (or get from a panel) and store as embedded data under the same name.
+
+The gallery page (`/` in multi-study mode) has three tabs: **Examples** (each card shows
+the exact URL Qualtrics sends), **Configuration** (an annotated `study.yaml` with a numbered
+note on each block, field types, rules, and defaults), and **Setup** (the step-by-step guide).
+
 Declare each field Qualtrics passes in, with a type:
 
 ```yaml
@@ -60,6 +86,13 @@ participant:
     top3:   {type: list, sep: ","}    # ?top3=pizza,tacos,sushi
     age:    {type: number}
 ```
+
+Any field may give a `label:` (the question text on the `/demo` form). A list field may
+also give `options: [...]` (and optionally `pick: N`) to set the chips on the form, and a
+number field `min:` / `max:`. These only shape the `/demo` form and do not restrict
+matching. A condition may give a `label:` for the form's condition dropdown, and the
+config may give a top-level `title:` and one-sentence `description:` (shown on the form
+and in the gallery).
 
 Then list rules under each condition. Every rule has the same shape:
 `- rule: field` for the common case, or `- rule: {field: ..., other arguments}`.
@@ -201,8 +234,14 @@ relaxing, so write the sentence to survive that, or keep that rule strict.
 | Setting | Default | Meaning |
 |---|---|---|
 | `timing.match_timeout` | required | how long to wait for a partner (`60s`, `2m`, `500ms`) |
-| `timing.chat_duration` | required | length of the chat |
-| `timing.min_messages` | 0 | recorded as `met_min_messages` per person; it does not end the chat early |
+| `timing.chat_duration` | required | length of the chat, or `none` for no time limit (elapsed timer and a Done button) |
+| `timing.end_when` | `timer` (`both_done` if untimed) | `timer`, `both_done` (both click Done), or `either_done` |
+| `timing.min_messages` | 0 | messages each person must send; with Done, enforced by the server; with `timer`, recorded as `met_min_messages` |
+| `timing.max_duration` | 60m | safety cap on an untimed chat |
+| `timing.extend_until_min` | 0 | timed chats: run up to this much longer until both have sent `min_messages` |
+| `timing.rejoin_timeout` | 3m | chats with stages: how long a returning or reconnecting partner is waited for |
+| `conditions.<name>.timing` | none | any `timing` key for this condition; overrides the global value |
+| `stages` / `conditions.<name>.stages` | none | several rounds with the same partner (below) |
 | `chat.intro` | none | a line shown at the top of every chat, e.g. the topic; placeholders allowed |
 | `on_timeout` | `nomatch` | only `nomatch` in v1; a `bot` fallback partner is planned |
 | `embed.allowed_origins` | required | sites allowed to embed the chat and receive its messages |
@@ -214,6 +253,56 @@ relaxing, so write the sentence to survive that, or keep that rule strict.
 
 The validator rejects unknown keys, unknown fields, wrong field types, and bad
 durations, and lists every problem at once.
+
+### Timing and stages
+
+Global `timing` applies to every condition; a condition's `timing` overrides it, and a
+stage overrides both. Settings that can never apply (e.g. `max_duration` on a timed chat)
+are rejected.
+
+```yaml
+conditions:
+  short:
+    timing: {chat_duration: 2m}      # this condition only
+  open:
+    timing:
+      chat_duration: none            # no clock: elapsed timer + Done button
+      end_when: both_done            # default when untimed; the first to click sees
+                                     # "Waiting for your partner to finish"; or either_done
+      min_messages: 3                # Done is rejected (server-side) until you have sent 3;
+                                     # the button reads "2 of 3 messages sent"
+      max_duration: 20m              # safety cap (default 60m)
+  staged:
+    reveal: "Your partner is a {partner.party}."   # stage 1 only, unless a stage sets reveal
+    stages:                          # or top-level `stages:`, inherited by every condition
+      - id: intro                    # letters, numbers, _; stored on messages and records
+        prompt: "Get to know each other."          # banner for this stage
+        chat_duration: 3m            # stage keys: chat_duration, min_messages, end_when,
+                                     # max_duration, extend_until_min
+        then: qualtrics              # continue (default): same window, after a divider
+                                     # qualtrics: survey moves on; rejoin with stage=discuss
+      - id: discuss                  # the last stage has no `then`
+        prompt: "Discuss the topic."
+        chat_duration: none
+        min_messages: 2
+
+timing:
+  match_timeout: 120s
+  chat_duration: 5m
+  extend_until_min: 0                # timed chats: extend until both reach min_messages
+  rejoin_timeout: 3m                 # wait this long for a returning partner, then partner_left
+```
+
+With `then: qualtrics`, the chat posts `stage_ended` to Qualtrics, which moves to your
+between-stage questions. The next chat block's question sends `stage=<id>` with the same
+participant ID and rejoins the same partner (the pair stays reserved). Whoever arrives
+first waits up to `rejoin_timeout`; if the other never comes, the chat ends with
+`partner_left` (and `no_rejoin` for the absent one). A reload or dropped connection
+mid-stage reconnects to the same chat with its transcript. `npm run qualtrics` writes one
+chat question per Qualtrics stage (`chat-question-2.js`, ...) and a template with one chat
+block per stage separated by a placeholder question; later chat questions skip themselves
+if the chat already ended. Outside Qualtrics (`/demo`), a `qualtrics` stage shows "In your
+study, your Qualtrics survey would show here" and a button that rejoins the same partner.
 
 ### Example configs
 
@@ -228,6 +317,52 @@ Run one locally with `STUDY_CONFIG=examples/same-vs-cross.yaml npm start`, then 
 two windows such as `http://localhost:3000/?id=a&cond=same&party=Democrat&age=30` and
 `http://localhost:3000/?id=b&cond=same&party=Democrat&age=35`.
 
+## Live demo without Qualtrics
+
+`GET /demo` is a mobile-friendly form built from your config: category fields with
+`values` become dropdowns, list fields with `options` become pick-N chips, numbers become
+number inputs, and the condition becomes a dropdown when there is more than one. It
+generates a random participant ID and opens the chat page top-level. The bare URL `/`
+redirects to `/demo`.
+
+`examples/demo.yaml` is tuned for showing syncchat live: pick three interests, get paired
+with anyone who shares one, and see the shared items in the banner.
+
+```bash
+STUDY_CONFIG=examples/demo.yaml npm start   # then open http://localhost:3000/demo in two tabs or devices
+```
+
+On Render, set the environment variable `STUDY_CONFIG=examples/demo.yaml`. Free instances
+sleep after about 15 minutes idle, so open the URL a minute before you demo.
+
+### Several studies on one server (examples gallery)
+
+Point `STUDY_CONFIG` (or `STUDY_DIR`) at a folder and the server hosts every `*.yaml` in
+it. Each study keeps its own waiting room and data (records carry its `study_id`), and the
+URL parameter `study=<study.id>` picks one: `/demo?study=combo`, `/?study=combo&id=...`,
+`/export?token=...&study=combo`. Study ids must be unique across the folder, and `study`
+cannot be a field name. `/` and `/gallery` show the tabbed page: the studies as cards with
+the description, the `npm run explain` text, the raw YAML, and a "Try it" link, plus the
+Configuration and Setup guides. Single-file mode is unchanged and ignores `study=`.
+
+`examples/gallery/` holds nine designs for demos:
+
+| Study | Dynamic |
+|---|---|
+| `shared-interest` | share at least one of three picked interests; more overlap ranks higher |
+| `cross-party` | Democrat meets Republican; reveal names the partner's party |
+| `same-vs-cross` | Qualtrics-randomized condition: same party vs. other party |
+| `opposing-views` | stances on a 1-7 scale at least 3 apart (`not: {within: ...}`) |
+| `similar-age-relax` | within 10 years of age, closest first; the age rule drops after 30s of waiting |
+| `advice-pairs` | a seeker meets a giver on the same topic; two seekers never match |
+| `combo` | cross-party AND (shared interest OR within 5 years) AND NOT the same gender |
+| `untimed-min-messages` | a 2-minute chat vs. an untimed chat that ends when both click Done, after 3 messages each |
+| `two-stage` | 3 minutes getting to know each other, survey questions, then the same partner discusses a topic until both are done |
+
+```bash
+STUDY_CONFIG=examples/gallery npm start   # then open http://localhost:3000 in two tabs or devices
+```
+
 ## Qualtrics messages
 
 The chat page talks to the generated question JavaScript with `postMessage`. The
@@ -237,7 +372,8 @@ snippet only accepts messages from your app URL, and the app only posts to origi
 | Message | When | Embedded data saved |
 |---|---|---|
 | `chat_matched` | a partner is found | `chat_match_id`, `chat_partner_id`, `chat_match_reason`, `chat_reveal`, `chat_waited_ms` |
-| `chat_ended` | timer ends, partner leaves, or join error | `chat_outcome`, `chat_message_count`, `chat_met_min_messages`, `chat_end_ts` |
+| `chat_ended` | timer ends, Done, partner leaves, or join error | `chat_outcome`, `chat_message_count`, `chat_met_min_messages`, `chat_end_ts`; with stages, also the last stage's `chat_<stage>_*` |
+| `stage_ended` | a `then: qualtrics` stage ends | `chat_<stage>_end_reason`, `chat_<stage>_message_count`, `chat_<stage>_met_min_messages` (then clicks Next) |
 | `nomatch` | no partner within `match_timeout` | same as `chat_ended`, with `chat_outcome = nomatch` |
 | `chat_continue` | participant clicks Continue in the chat | (clicks Next) |
 
@@ -246,15 +382,16 @@ participants to a different block.
 
 ## Data
 
-Each record carries `study_id`. With `MONGO_URI`, records go to four collections;
-otherwise to four files in `./data/`.
+Each record carries `study_id`. With `MONGO_URI`, records go to five collections;
+otherwise to five files in `./data/`.
 
 | Record | Contents |
 |---|---|
 | `arrivals` | participant ID, condition, parsed fields, arrival time |
 | `matches` | match ID, both IDs (earlier arrival first), condition, rules satisfied, rules waived by relaxing, `prefer` rules used and their scores, reveal text per person, wait time per person |
-| `messages` | match ID, sender ID, sequence number, text, time |
-| `outcomes` | one per person: `completed`, `partner_left`, `left`, `nomatch`, or `left_waiting`, plus message count and `met_min_messages` |
+| `messages` | match ID, sender ID, sequence number, text, time, and `stage` in a chat with stages |
+| `outcomes` | one per person: `completed`, `partner_left`, `left`, `no_rejoin`, `nomatch`, or `left_waiting`, plus message count, `met_min_messages`, `end_reason` (`timer`, `both_done`, `either_done`, `max_duration`, `min_reached`, `left`, `no_rejoin`), and the last `stage` |
+| `stages` | chats with stages: one per stage with start/end time, end reason, per-person message counts and `met_min_messages`, and who clicked Done |
 
 Download everything with `GET /export?token=ADMIN_TOKEN` (JSON), or one table as CSV
 with `/export?token=ADMIN_TOKEN&format=csv&table=messages`. Merge with Qualtrics on
@@ -281,6 +418,7 @@ the participant ID (ResponseID) or `chat_match_id`.
 ```bash
 npm install
 npm test                       # unit tests, command tests, and an end-to-end socket test
+LIVE_URL=https://your-app.onrender.com node --test test/live.test.js   # optional smoke test of a deployed gallery
 npm run validate [config ...]  # check configs; lists every problem at once
 npm run explain  [config ...]
 npm run simulate [config] [people.csv]

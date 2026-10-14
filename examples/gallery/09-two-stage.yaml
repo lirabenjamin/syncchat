@@ -1,0 +1,34 @@
+# Two stages with the same partner, with Qualtrics questions in between.
+title: Two-stage chat
+description: Partners get to know each other for 3 minutes, answer survey questions, then return to the same partner to discuss a topic until both are done.
+
+study:          # picked by the URL param ?study= (multi-study server)
+  id: two-stage
+
+participant:
+  fields:       # each field is a URL param, from Qualtrics embedded data
+    party: {type: category, label: Which party do you lean toward?, values: [Democrat, Republican]}
+
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
+  cross:
+    require:
+      - differ: party
+    reveal: "Your partner is a {partner.party}."   # shown in stage 1 only, unless a stage sets its own
+
+stages:         # run in order with the same partner; a condition may also define its own stages
+  - id: intro
+    prompt: "Stage 1: get to know each other. What do you do, and where are you from?"
+    chat_duration: 3m
+    then: qualtrics           # the survey moves on; a later chat question (stage=discuss) reunites the pair
+  - id: discuss
+    prompt: "Stage 2: discuss whether the voting age should be lowered to 16."
+    chat_duration: none       # no clock; ends when both click Done
+    min_messages: 2           # Done unlocks after 2 messages each
+
+timing:         # global defaults; stages override them
+  match_timeout: 120s
+  chat_duration: 300s
+  rejoin_timeout: 3m          # how long a returning partner waits for the other (default 3m)
+
+embed:          # sites allowed to embed the chat
+  allowed_origins: ["https://*.qualtrics.com"]

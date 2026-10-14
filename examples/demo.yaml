@@ -1,0 +1,34 @@
+# Live demo: open /demo on two devices, each pick three interests, and get paired with
+# someone who shares at least one. Run with STUDY_CONFIG=examples/demo.yaml npm start.
+study:
+  id: demo
+  group_size: 2
+
+participant:
+  id_param: id
+  condition_param: cond
+  fields:
+    top3:
+      type: list
+      sep: ","
+      options: [coffee, hiking, cooking, jazz, soccer, travel, reading, movies]
+      pick: 3
+
+conditions:
+  shared:
+    require:
+      - overlap: {field: top3, min: 1}
+    prefer:
+      - overlap: {field: top3}          # more shared items ranks higher
+    reveal: "You were matched because you both picked {shared.top3}."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+chat:
+  intro: "Get to know each other: what do you love about the thing you share?"
+
+embed:
+  # The demo is used top-level, which the app always allows from its own origin.
+  allowed_origins: ["https://*.qualtrics.com"]

@@ -1,6 +1,6 @@
 'use strict';
 
-// Researcher commands. Each takes config file paths (default: STUDY_CONFIG or ./study.yaml).
+// Researcher commands. Each takes config files or folders of them (default: STUDY_CONFIG or ./study.yaml).
 //   npm run validate [config ...]                 check configs, list every problem
 //   npm run explain  [config ...]                 print the matching logic in plain English
 //   npm run simulate [config] [people.csv]        run the matcher over fake arrivals
@@ -27,7 +27,11 @@ function parseArgs(argv) {
   }
   // `npm run qualtrics --url X` (without `--`) hands the flag to npm, which exposes it as npm_config_url.
   opts.url = opts.url || process.env.npm_config_url || null;
-  if (!opts.files.length) opts.files.push(process.env.STUDY_CONFIG || path.join(root, 'study.yaml'));
+  if (!opts.files.length) opts.files.push(process.env.STUDY_DIR || process.env.STUDY_CONFIG || path.join(root, 'study.yaml'));
+  // A folder stands for every .yaml file in it.
+  opts.files = opts.files.flatMap((f) => (fs.existsSync(f) && fs.statSync(f).isDirectory()
+    ? fs.readdirSync(f).filter((n) => /\.ya?ml$/i.test(n)).sort().map((n) => path.join(f, n))
+    : [f]));
   return opts;
 }
 

@@ -1,0 +1,31 @@
+# Pair people who disagree: stances on a 1-7 scale must be at least 3 points apart.
+title: Opposing views
+description: You are paired only with someone whose stance on a 1 to 7 scale is at least 3 points away from yours.
+
+study:          # picked by the URL param ?study= (multi-study server)
+  id: opposing-views
+
+participant:
+  fields:       # each field is a URL param, from Qualtrics embedded data
+    stance:
+      type: number
+      label: "A national carbon tax is a good idea (1 = strongly disagree, 7 = strongly agree)"
+      min: 1
+      max: 7
+
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
+  disagree:
+    require:    # hard rules: all must hold
+      - not: {within: {field: stance, max: 2}}   # NOT within 2 points, i.e. 3 or more apart
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
+    reveal: "You were matched because you disagree: you said {me.stance}, they said {partner.stance}."
+
+chat:           # intro: shown at the top of the chat
+  intro: "Topic: a national carbon tax. Explain your view, then try to state your partner's view fairly."
+
+timing:         # wait for a partner, then chat
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:          # sites allowed to embed the chat
+  allowed_origins: ["https://*.qualtrics.com"]

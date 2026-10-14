@@ -1,0 +1,37 @@
+# Timed vs untimed: a 2-minute chat against an open-ended chat that ends when both partners click Done.
+title: Timed vs untimed chat
+description: In "short" the chat ends after 2 minutes; in "open" there is no clock, and each person must send 3 messages before Done unlocks.
+
+study:          # picked by the URL param ?study= (multi-study server)
+  id: untimed-min-messages
+
+participant:
+  fields:       # each field is a URL param, from Qualtrics embedded data
+    topic:
+      type: list
+      label: Pick a topic you would like to talk about
+      options: [food, travel, sports, music]
+      pick: 1
+
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
+  short:
+    label: Short (2 minutes)
+    timing:     # overrides the global timing below, for this condition only
+      chat_duration: 2m
+  open:
+    label: Open (until both are done)
+    timing:
+      chat_duration: none     # no clock: an elapsed timer and a Done button instead
+      end_when: both_done     # ends once both click Done (each sees "Waiting for your partner to finish")
+      min_messages: 3         # Done stays locked until that person has sent 3 messages
+      max_duration: 20m       # safety cap on an untimed chat (default 60m)
+
+chat:
+  intro: "Talk about any topic you like."
+
+timing:         # global defaults; each condition may override them
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:          # sites allowed to embed the chat
+  allowed_origins: ["https://*.qualtrics.com"]
