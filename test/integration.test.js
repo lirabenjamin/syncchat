@@ -85,6 +85,9 @@ test('(a) Dem + Rep with overlapping top3 match in cross and both see the reveal
   assert.deepStrictEqual(match.rules_satisfied, ['differ: party', 'overlap: top3']);
   assert.deepStrictEqual(match.scores, [-10]);
   assert.strictEqual(match.reveal['a-dem'], md.reveal);
+  assert.strictEqual(md.partner_id, 'a-rep', 'partner_id goes to Qualtrics');
+  assert.strictEqual(mr.partner_id, 'a-dem');
+  assert.match(md.match_reason, /differ: party/);
   d.socket.close();
   r.socket.close();
 });
