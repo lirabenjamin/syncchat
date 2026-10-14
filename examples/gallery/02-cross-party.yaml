@@ -1,0 +1,26 @@
+# Every Democrat is paired with a Republican, and both are told who they are talking to.
+title: Cross-party conversation
+description: A Democrat is always paired with a Republican, and both learn their partner's party before chatting about immigration.
+
+study:
+  id: cross-party
+
+participant:
+  fields:
+    party: {type: category, label: Your party, values: [Democrat, Republican]}
+
+conditions:
+  cross:
+    require:
+      - differ: party
+    reveal: "Your partner is a {partner.party}."
+
+chat:
+  intro: "Topic: immigration. Share what you think and ask what they think."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

@@ -1,0 +1,30 @@
+# Pair people who disagree: stances on a 1-7 scale must be at least 3 points apart.
+title: Opposing views
+description: You are paired only with someone whose stance on a 1 to 7 scale is at least 3 points away from yours.
+
+study:
+  id: opposing-views
+
+participant:
+  fields:
+    stance:
+      type: number
+      label: "A national carbon tax is a good idea (1 = strongly disagree, 7 = strongly agree)"
+      min: 1
+      max: 7
+
+conditions:
+  disagree:
+    require:
+      - not: {within: {field: stance, max: 2}}   # NOT within 2 points, i.e. 3 or more apart
+    reveal: "You were matched because you disagree: you said {me.stance}, they said {partner.stance}."
+
+chat:
+  intro: "Topic: a national carbon tax. Explain your view, then try to state your partner's view fairly."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

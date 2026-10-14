@@ -1,0 +1,30 @@
+# Qualtrics randomizes each participant into `same` or `cross` (embedded data `cond`).
+# People only ever match within their own condition.
+title: Same-party vs. cross-party (randomized)
+description: Qualtrics randomizes each person into a condition; in "same" you meet someone from your own party, in "cross" someone from the other party.
+
+study:
+  id: same-vs-cross
+
+participant:
+  fields:
+    party: {type: category, label: Your party, values: [Democrat, Republican]}
+
+conditions:
+  same:
+    label: Same party
+    require:
+      - same: party
+    reveal: "Your partner is also a {partner.party}."
+  cross:
+    label: Cross party
+    require:
+      - differ: party
+    reveal: "Your partner is a {partner.party}."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

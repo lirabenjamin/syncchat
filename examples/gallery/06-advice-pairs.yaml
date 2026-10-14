@@ -1,0 +1,29 @@
+# Complementary roles: an advice-seeker meets an advice-giver who chose the same topic.
+title: Advice pairs
+description: Someone seeking advice is paired with someone giving advice on the same topic; two seekers never match.
+
+study:
+  id: advice-pairs
+
+participant:
+  fields:
+    role: {type: category, label: Are you here to seek or give advice?, values: [Seeking advice, Giving advice]}
+    topic:
+      type: list
+      label: Pick a topic
+      options: [career, relationships, money, health]
+      pick: 1
+
+conditions:
+  advice:
+    require:
+      - differ: role                      # one seeker, one giver
+      - overlap: {field: topic, min: 1}   # same topic
+    reveal: "You're paired to talk about {shared.topic}: one of you is seeking advice, the other giving it."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

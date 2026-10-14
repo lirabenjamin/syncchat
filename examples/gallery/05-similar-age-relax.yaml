@@ -1,0 +1,27 @@
+# Pair people within 10 years of age, closest first. After 30 seconds of waiting the age
+# rule is dropped, so nobody waits forever for a perfect match.
+title: Similar age, relaxed with waiting
+description: You are paired with someone within 10 years of your age, but after 30 seconds of waiting the age rule is dropped so anyone can match.
+
+study:
+  id: similar-age-relax
+
+participant:
+  fields:
+    age: {type: number, label: Your age, min: 18, max: 99}
+
+conditions:
+  similar:
+    require:
+      - within: {field: age, max: 10, relaxable: true}   # dropped after relax_after
+    prefer:
+      - closest: age
+    relax_after: 30s
+    reveal: "You were paired by age: you are {me.age} and your partner is {partner.age}."
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

@@ -6,9 +6,12 @@
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function fieldHtml(name, def) {
-  const label = `<label class="q" for="f-${esc(name)}">${esc(name)}</label>`;
+  const text = esc(def.label || name);
+  const label = `<label class="q" for="f-${esc(name)}">${text}</label>`;
   if (def.type === 'number') {
-    return `<div class="field">${label}<input id="f-${esc(name)}" name="${esc(name)}" type="number" inputmode="decimal" required></div>`;
+    const range = ['min', 'max'].filter((k) => def[k] !== undefined).map((k) => ` ${k}="${def[k]}"`).join('');
+    const ph = def.min !== undefined && def.max !== undefined ? ` placeholder="${def.min} to ${def.max}"` : '';
+    return `<div class="field">${label}<input id="f-${esc(name)}" name="${esc(name)}" type="number" inputmode="decimal"${range}${ph} required></div>`;
   }
   if (def.type === 'category' && def.values) {
     const opts = def.values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
@@ -19,26 +22,31 @@ function fieldHtml(name, def) {
     const hint = n ? `Pick ${n}` : 'Pick any';
     const chips = def.options.map((o) => `<button type="button" class="chip" data-value="${esc(o)}">${esc(o)}</button>`).join('');
     return `<div class="field list" data-name="${esc(name)}" data-sep="${esc(def.sep)}" data-pick="${n || ''}">` +
-      `<span class="q">${esc(name)} <span class="hint">${hint}</span></span><div class="chips">${chips}</div></div>`;
+      `<span class="q">${text} <span class="hint">${hint}</span></span><div class="chips">${chips}</div></div>`;
   }
   const ph = def.type === 'list' ? `items separated by "${def.sep}"` : '';
   return `<div class="field">${label}<input id="f-${esc(name)}" name="${esc(name)}" type="text" placeholder="${esc(ph)}" required></div>`;
 }
 
-function renderDemo(config) {
+// opts.study: in multi-study mode, the study id the form submits (plus a link back to the gallery).
+function renderDemo(config, { study = null } = {}) {
   const { id_param: idParam, condition_param: condParam, fields } = config.participant;
-  const conds = Object.keys(config.conditions);
+  const conds = Object.entries(config.conditions);
   const condHtml = conds.length > 1
-    ? `<div class="field"><label class="q" for="f-cond">condition</label><select id="f-cond" name="${esc(condParam)}">` +
-      conds.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('') + '</select></div>'
-    : `<input type="hidden" name="${esc(condParam)}" value="${esc(conds[0])}">`;
+    ? '<div class="field"><label class="q" for="f-cond">Condition <span class="hint">(in a real study, Qualtrics randomizes this)</span></label>' +
+      `<select id="f-cond" name="${esc(condParam)}">` +
+      conds.map(([c, d]) => `<option value="${esc(c)}">${esc(d.label || c)}</option>`).join('') + '</select></div>'
+    : `<input type="hidden" name="${esc(condParam)}" value="${esc(conds[0][0])}">`;
+  const studyHtml = study ? `<input type="hidden" name="study" value="${esc(study)}">` : '';
+  const back = study ? '<a class="back" href="/gallery">&larr; All examples</a>' : '';
+  const hint = config.description ? `<p class="tip"><strong>How matching works:</strong> ${esc(config.description)}</p>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>syncchat demo</title>
+<title>${esc(config.title || 'syncchat demo')}</title>
 <style>
   :root { --ink: #1f2328; --muted: #656d76; --line: #cfd4da; --soft: #f5f6f8; --accent: #3b5bdb; }
   * { box-sizing: border-box; }
@@ -47,8 +55,9 @@ function renderDemo(config) {
   h1 { font-size: 22px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 22px; }
   .field { margin-bottom: 20px; }
-  .q { display: block; font-weight: 600; margin-bottom: 8px; text-transform: capitalize; }
-  .hint { font-weight: 400; color: var(--muted); text-transform: none; }
+  .q { display: block; font-weight: 600; margin-bottom: 8px; }
+  .q::first-letter { text-transform: uppercase; }
+  .hint { font-weight: 400; color: var(--muted); }
   input, select { width: 100%; padding: 12px; font: inherit; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { font: inherit; padding: 9px 15px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
@@ -56,15 +65,21 @@ function renderDemo(config) {
   .go { width: 100%; font: inherit; font-weight: 600; padding: 14px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; }
   .go:disabled { opacity: .45; cursor: default; }
   .err { color: #c92a2a; min-height: 1.4em; margin: 8px 0 0; font-size: 14px; }
+  .back { display: inline-block; color: var(--muted); text-decoration: none; font-size: 14px; margin-bottom: 14px; }
+  .back:hover { color: var(--accent); }
+  .tip { background: var(--soft); border-radius: 10px; padding: 12px 14px; font-size: 14px; margin: 0 0 22px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Find a chat partner</h1>
+  ${back}
+  <h1>${esc(config.title || 'Find a chat partner')}</h1>
   <p class="sub">Answer a few questions. You will be paired with someone who matches, then chat live.</p>
+  ${hint}
   <form id="form" novalidate>
     ${Object.entries(fields).map(([n, d]) => fieldHtml(n, d)).join('\n    ')}
     ${condHtml}
+    ${studyHtml}
     <button class="go" type="submit">Start</button>
     <p class="err" id="err"></p>
   </form>
@@ -92,6 +107,7 @@ function renderDemo(config) {
     params.set(${JSON.stringify(idParam)}, 'demo-' + Math.random().toString(36).slice(2, 10));
     for (const el of form.querySelectorAll('input[name], select[name]')) {
       if (el.required && !el.value.trim()) { err.textContent = 'Please answer every question.'; return el.focus(); }
+      if (!el.checkValidity()) { err.textContent = el.validationMessage; return el.focus(); }
       params.set(el.name, el.value.trim());
     }
     for (const box of lists) {
@@ -111,4 +127,4 @@ function renderDemo(config) {
 </html>`;
 }
 
-module.exports = { renderDemo };
+module.exports = { renderDemo, esc };

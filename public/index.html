@@ -72,8 +72,9 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (async function () {
-  const cfg = await (await fetch('/client-config.json')).json();
   const params = Object.fromEntries(new URLSearchParams(location.search));
+  // `study` picks one study when the server hosts several (the gallery).
+  const cfg = await (await fetch('/client-config.json' + (params.study ? '?study=' + encodeURIComponent(params.study) : ''))).json();
   const pid = params[cfg.id_param] || '';
   const $ = (id) => document.getElementById(id);
 
@@ -177,6 +178,8 @@
       location.href = cfg.redirect_url
         .replace('{id}', encodeURIComponent(pid))
         .replace('{outcome}', encodeURIComponent(result.outcome || ''));
+    } else if (params.study) {
+      location.href = '/demo?study=' + encodeURIComponent(params.study); // gallery demo: back to its form
     } else {
       $('continue').disabled = true;
       $('end-sub').textContent = 'You can close this window.';

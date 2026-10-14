@@ -55,7 +55,10 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
   }
 
   if (!isObject(raw)) throw new ConfigError(['the file must contain a YAML mapping']);
-  section(raw, '(top level)', ['study', 'participant', 'conditions', 'timing', 'on_timeout', 'embed', 'chat', 'limits']);
+  section(raw, '(top level)', ['title', 'description', 'study', 'participant', 'conditions', 'timing', 'on_timeout', 'embed', 'chat', 'limits']);
+  for (const k of ['title', 'description']) {
+    if (raw[k] !== undefined && (typeof raw[k] !== 'string' || !raw[k].trim())) err(k, 'must be text');
+  }
 
   // study
   const study = section(raw.study, 'study', ['id', 'group_size']);
@@ -78,8 +81,22 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
       err(path, `needs a type: one of ${FIELD_TYPES.join(', ')}`);
       continue;
     }
-    section(def, path, { category: ['type', 'values'], list: ['type', 'sep', 'options', 'pick'], number: ['type'] }[def.type]);
+    const keys = { category: ['values'], list: ['sep', 'options', 'pick'], number: ['min', 'max'] }[def.type];
+    section(def, path, ['type', 'label', ...keys]);
     const f = { type: def.type };
+    // label, options/pick, and min/max only shape the /demo form; matching ignores them.
+    if (def.label !== undefined) {
+      if (typeof def.label !== 'string' || !def.label.trim()) err(`${path}.label`, 'must be text');
+      else f.label = def.label;
+    }
+    if (def.type === 'number') {
+      for (const k of ['min', 'max']) {
+        if (def[k] === undefined) continue;
+        if (typeof def[k] !== 'number') err(`${path}.${k}`, 'must be a number');
+        else f[k] = def[k];
+      }
+      if (f.min !== undefined && f.max !== undefined && f.min > f.max) err(`${path}.min`, 'must not exceed max');
+    }
     if (def.type === 'category' && def.values !== undefined) {
       if (!Array.isArray(def.values) || !def.values.length) err(`${path}.values`, 'must be a non-empty list');
       else f.values = def.values.map(String);
@@ -87,7 +104,6 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
     if (def.type === 'list') {
       if (def.sep !== undefined && (typeof def.sep !== 'string' || !def.sep)) err(`${path}.sep`, 'must be a non-empty string');
       f.sep = def.sep || ',';
-      // options/pick only shape the /demo form; matching still accepts any list item.
       if (def.options !== undefined) {
         if (!Array.isArray(def.options) || !def.options.length) err(`${path}.options`, 'must be a non-empty list');
         else {
@@ -145,8 +161,12 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
   if (isObject(raw.conditions) && !Object.keys(raw.conditions).length) err('conditions', 'define at least one condition');
   for (const [name, c] of Object.entries(rawConds)) {
     const path = `conditions.${name}`;
-    const cond = section(c, path, ['require', 'prefer', 'relax_after', 'reveal']);
+    const cond = section(c, path, ['label', 'require', 'prefer', 'relax_after', 'reveal']);
     const out = { require: [], prefer: [], relax_after_ms: null, reveal: false };
+    if (cond.label !== undefined) {
+      if (typeof cond.label !== 'string' || !cond.label.trim()) err(`${path}.label`, 'must be text');
+      else out.label = cond.label; // shown in the /demo condition dropdown
+    }
     for (const key of ['require', 'prefer']) {
       if (cond[key] === undefined || cond[key] === null) continue;
       if (!Array.isArray(cond[key])) {
@@ -208,6 +228,8 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
   if (errors.length) throw new ConfigError(errors);
 
   return {
+    title: raw.title || null,
+    description: raw.description || null,
     study: { id: study.id, group_size: groupSize },
     participant: { id_param: part.id_param || 'id', condition_param: part.condition_param || 'cond', fields },
     conditions,
@@ -234,4 +256,26 @@ function loadConfig(file) {
   }
 }
 
-module.exports = { loadConfig, validateConfig, parseDuration, ConfigError };
+// Every *.yaml / *.yml in `dir`, sorted by file name: [{ file, config, source }]. Study ids must be unique.
+function loadStudyDir(dir) {
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((f) => /\.ya?ml$/i.test(f)).sort();
+  } catch (e) {
+    throw new ConfigError([e.code === 'ENOENT' ? 'folder not found' : e.message], dir);
+  }
+  if (!names.length) throw new ConfigError(['no .yaml files in this folder'], dir);
+  const studies = names.map((n) => {
+    const file = path.join(dir, n);
+    return { file, config: loadConfig(file), source: fs.readFileSync(file, 'utf8') };
+  });
+  const seen = new Map();
+  for (const s of studies) {
+    const id = s.config.study.id;
+    if (seen.has(id)) throw new ConfigError([`study.id "${id}" is used by both ${seen.get(id)} and ${path.basename(s.file)}`], dir);
+    seen.set(id, path.basename(s.file));
+  }
+  return studies;
+}
+
+module.exports = { loadConfig, loadStudyDir, validateConfig, parseDuration, ConfigError };

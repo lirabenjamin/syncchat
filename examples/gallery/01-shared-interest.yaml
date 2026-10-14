@@ -1,0 +1,32 @@
+# Pair people who share at least one interest; more shared interests rank higher.
+title: Shared interests
+description: You are paired with someone who picked at least one of the same three interests, and the more you share, the better.
+
+study:
+  id: shared-interest
+
+participant:
+  fields:
+    top3:
+      type: list
+      label: Pick your top three interests
+      options: [coffee, hiking, cooking, jazz, soccer, travel, reading, movies]
+      pick: 3
+
+conditions:
+  shared:
+    require:
+      - overlap: {field: top3, min: 1}  # at least one interest in common
+    prefer:
+      - overlap: {field: top3}          # more shared items ranks higher
+    reveal: "You were matched because you both picked {shared.top3}."
+
+chat:
+  intro: "Get to know each other: what do you love about the thing you share?"
+
+timing:
+  match_timeout: 120s
+  chat_duration: 300s
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]   # top-level use on this site is always allowed

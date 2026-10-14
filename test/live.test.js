@@ -1,43 +1,54 @@
 'use strict';
-// Optional smoke test against a deployed demo (examples/demo.yaml). Skipped unless LIVE_URL is set:
+// Optional smoke test against a deployed gallery (STUDY_CONFIG=examples/gallery). Skipped unless LIVE_URL is set:
 //   LIVE_URL=https://syncchat-demo.onrender.com node --test test/live.test.js
 const test = require('node:test');
 const assert = require('node:assert');
-const { io: connect } = require('socket.io-client');
+const { matches, nonMatches, join } = require('./gallery-cases');
 
 const url = process.env.LIVE_URL;
-
+const opts = { skip: !url };
+const tag = () => `live-${Math.random().toString(36).slice(2, 8)}`;
 // Connect like a top-level browser tab on the app's own origin.
-function join(params) {
-  const socket = connect(url, { forceNew: true, extraHeaders: { origin: new URL(url).origin } });
-  const once = (ev) => new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`timed out waiting for ${ev}`)), 20000);
-    socket.once(ev, (p) => { clearTimeout(t); resolve(p); });
-  });
-  socket.on('connect', () => socket.emit('join', params));
-  return { socket, once };
-}
+const joinLive = (params) => join(url, params, { origin: new URL(url).origin });
 
-test('live: pair, reveal, message, then a lone participant waits', { skip: !url }, async () => {
-  const tag = Math.random().toString(36).slice(2, 8);
+test('live: gallery lists all 7 studies', opts, async () => {
   const health = await (await fetch(`${url}/healthz`)).json();
   assert.strictEqual(health.ok, true);
-  const demo = await fetch(`${url}/demo`);
-  assert.strictEqual(demo.status, 200);
-  assert.match(await demo.text(), /data-value="jazz"/);
-
-  const a = join({ id: `live-a-${tag}`, cond: 'shared', top3: 'jazz,hiking,coffee' });
-  const b = join({ id: `live-b-${tag}`, cond: 'shared', top3: 'jazz,soccer,movies' });
-  const [ma, mb] = await Promise.all([a.once('matched'), b.once('matched')]);
-  for (const m of [ma, mb]) assert.strictEqual(m.reveal, 'You were matched because you both picked jazz.');
-  assert.match(ma.intro, /what do you love/);
-
-  const got = b.once('message');
-  a.socket.emit('message', 'hello from A');
-  assert.deepStrictEqual(await got.then((m) => [m.mine, m.text]), [false, 'hello from A']);
-
-  const c = join({ id: `live-c-${tag}`, cond: 'shared', top3: 'reading,travel,cooking' });
-  const w = await c.once('waiting');
-  assert.ok(w.timeout_at > Date.now());
-  for (const p of [a, b, c]) p.socket.close();
+  const html = await (await fetch(`${url}/`)).text();
+  assert.strictEqual(html.match(/<article class="card"/g).length, 7);
 });
+
+for (const c of matches) {
+  test(`live: ${c.study} pairs a compatible pair with the right reveal`, opts, async () => {
+    const t = tag();
+    const a = joinLive({ study: c.study, id: `a-${t}`, ...c.a });
+    await a.next('waiting');
+    const b = joinLive({ study: c.study, id: `b-${t}`, ...c.b });
+    try {
+      const [ma, mb] = await Promise.all([a.next('matched'), b.next('matched')]);
+      assert.deepStrictEqual([ma.reveal, mb.reveal], c.reveal);
+      const got = b.next('message');
+      a.socket.emit('message', 'hello from A');
+      assert.strictEqual((await got).text, 'hello from A');
+    } finally {
+      a.socket.close();
+      b.socket.close();
+    }
+  });
+}
+
+for (const c of nonMatches) {
+  test(`live: ${c.study} keeps an incompatible pair waiting`, opts, async () => {
+    const t = tag();
+    const a = joinLive({ study: c.study, id: `a-${t}`, ...c.a });
+    const b = joinLive({ study: c.study, id: `b-${t}`, ...c.b });
+    try {
+      await Promise.all([a.next('waiting'), b.next('waiting')]);
+      await new Promise((r) => setTimeout(r, 3000));
+      assert.strictEqual(a.seen('matched') + b.seen('matched'), 0);
+    } finally {
+      a.socket.close();
+      b.socket.close();
+    }
+  });
+}

@@ -11,6 +11,7 @@ const reveal = require('./reveal');
 const { makeOriginMatcher, patternToRegexSource } = require('./origins');
 const { KINDS, toCsv } = require('./storage');
 const { renderDemo } = require('./demo');
+const { renderGallery } = require('./gallery');
 
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -30,83 +31,21 @@ function rateLimiter(max, windowMs) {
   };
 }
 
-function createApp({ config, storage, log = console.log }) {
+// One study's live state: its waiting room, active participants, and chat rooms.
+function createStudy({ config, storage, log }) {
   const { participant, timing, limits, embed } = config;
-  const originAllowed = makeOriginMatcher(embed.allowed_origins);
 
-  const app = express();
-  app.disable('x-powered-by');
-  const server = http.createServer(app);
-
-  // Only allowed origins may frame the page.
-  app.use((req, res, next) => {
-    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${embed.allowed_origins.join(' ')}`);
-    next();
-  });
-  // The bare URL (no participant params) goes to the demo form; with params it is the chat page.
-  app.get('/', (req, res, next) => (Object.keys(req.query).length ? next() : res.redirect('/demo')));
-  const demoHtml = renderDemo(config);
-  app.get('/demo', (req, res) => res.type('html').send(demoHtml));
-  app.use(express.static(path.join(__dirname, '..', 'public')));
-
-  app.get('/client-config.json', (req, res) => {
-    res.json({
-      id_param: participant.id_param,
-      condition_param: participant.condition_param,
-      max_message_length: limits.max_message_length,
-      parent_origin_patterns: embed.allowed_origins.map(patternToRegexSource),
-      redirect_url: embed.redirect_url,
-    });
-  });
-
-  // ---- live state ----
   const lobby = createLobby(config, {
     clock: { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout },
     onMatch: startRoom,
     onTimeout: (entry, waitedMs) => {
       recordOutcome(entry, 'nomatch', { waited_ms: waitedMs });
       entry.socket.emit('noMatch', { waited_ms: waitedMs });
-      log(`[nomatch] condition=${entry.cond}`);
+      log(`[nomatch] study=${config.study.id} condition=${entry.cond}`);
     },
   });
   const active = new Map(); // participant id -> entry (waiting or chatting)
   const rooms = new Set();
-
-  app.get('/healthz', (req, res) => {
-    res.json({
-      ok: true,
-      study: config.study.id,
-      storage: storage.backend,
-      waiting: lobby.counts(),
-      rooms: rooms.size,
-    });
-  });
-
-  app.get('/export', async (req, res) => {
-    const token = process.env.ADMIN_TOKEN;
-    const given = String(req.query.token || '');
-    const ok = token && given.length === token.length &&
-      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
-    if (!ok) return res.status(403).json({ error: 'forbidden' });
-    const data = await storage.exportAll();
-    if (req.query.format !== 'csv') return res.json(data);
-    const table = req.query.table || 'matches';
-    if (!KINDS.includes(table)) return res.status(400).json({ error: `table must be one of ${KINDS.join(', ')}` });
-    res.type('text/csv').attachment(`${config.study.id}_${table}.csv`).send(toCsv(data[table]));
-  });
-
-  const io = new Server(server, {
-    maxHttpBufferSize: 1e5,
-    // Browsers send Origin; accept our own page and the allowed embedders. Non-browser
-    // clients (no Origin) are allowed so the server can be scripted and tested.
-    allowRequest: (req, cb) => {
-      const o = req.headers.origin;
-      let self = false;
-      try { self = !!o && new URL(o).host === req.headers.host; } catch { /* malformed origin */ }
-      cb(null, !o || self || originAllowed(o));
-    },
-  });
-
   const joinAllowed = rateLimiter(limits.joins_per_ip_per_minute, 60000);
 
   function recordOutcome(entry, outcome, extra = {}) {
@@ -153,7 +92,7 @@ function createApp({ config, storage, log = console.log }) {
         partner_id: others(m).map((x) => x.pid).join(','),
       });
     }
-    log(`[match] condition=${room.cond} waited_ms=${members.map((m) => now - m.arrivedAt).join('/')} rooms=${rooms.size}`);
+    log(`[match] study=${config.study.id} condition=${room.cond} waited_ms=${members.map((m) => now - m.arrivedAt).join('/')} rooms=${rooms.size}`);
   }
 
   function endRoom(room, reason, leaver = null) {
@@ -175,14 +114,12 @@ function createApp({ config, storage, log = console.log }) {
         });
       }
     }
-    log(`[end] condition=${room.cond} outcome=${reason} messages=${room.messages.length}`);
+    log(`[end] study=${config.study.id} condition=${room.cond} outcome=${reason} messages=${room.messages.length}`);
   }
 
-  function handleJoin(socket, ip, params) {
-    if (socket.data.entry) return;
+  function join(socket, ip, params) {
     const fail = (code, message) => socket.emit('joinError', { code, message });
     if (!joinAllowed(ip)) return fail('rate_limited', 'Too many attempts. Please wait a minute.');
-    if (!params || typeof params !== 'object') return fail('bad_request', 'Missing parameters.');
 
     const pid = String(params[participant.id_param] ?? '').trim().slice(0, 128);
     if (!pid) return fail('missing_id', `Missing participant ID (URL parameter "${participant.id_param}").`);
@@ -200,7 +137,7 @@ function createApp({ config, storage, log = console.log }) {
     if (active.has(pid)) return fail('duplicate_id', 'This participant ID is already connected.');
 
     const now = Date.now();
-    const entry = { pid, cond, fields, socket };
+    const entry = { pid, cond, fields, socket, study: api };
     socket.data.entry = entry;
     active.set(pid, entry);
     storage.record('arrivals', { participant_id: pid, condition: cond, fields, arrived_at: iso(now) });
@@ -208,11 +145,10 @@ function createApp({ config, storage, log = console.log }) {
     lobby.join(entry);
   }
 
-  function handleMessage(socket, text) {
-    const entry = socket.data.entry;
-    const room = entry && entry.room;
+  function message(entry, text) {
+    const room = entry.room;
     if (!room || room.ended) return;
-    if (!socket.data.msgAllowed(entry.pid)) return socket.emit('rateLimited');
+    if (!entry.socket.data.msgAllowed(entry.pid)) return entry.socket.emit('rateLimited');
     const clean = String(text ?? '').trim().slice(0, limits.max_message_length);
     if (!clean) return;
     const msg = { from: entry, text: clean, ts: Date.now() };
@@ -224,9 +160,8 @@ function createApp({ config, storage, log = console.log }) {
     for (const m of room.members) m.socket.emit('message', { mine: m === entry, text: clean, ts: msg.ts });
   }
 
-  function handleDisconnect(socket) {
-    const entry = socket.data.entry;
-    if (!entry || !active.has(entry.pid) || active.get(entry.pid) !== entry) return;
+  function disconnect(entry) {
+    if (active.get(entry.pid) !== entry) return;
     if (entry.room) endRoom(entry.room, 'left', entry);
     else {
       lobby.leave(entry);
@@ -234,21 +169,122 @@ function createApp({ config, storage, log = console.log }) {
     }
   }
 
+  const api = {
+    config,
+    storage,
+    join,
+    message,
+    disconnect,
+    status: () => ({ waiting: lobby.counts(), rooms: rooms.size }),
+    clientConfig: () => ({
+      id_param: participant.id_param,
+      condition_param: participant.condition_param,
+      max_message_length: limits.max_message_length,
+      parent_origin_patterns: embed.allowed_origins.map(patternToRegexSource),
+      redirect_url: embed.redirect_url,
+    }),
+    close() {
+      for (const room of rooms) clearTimeout(room.timer);
+      lobby.clear();
+    },
+  };
+  return api;
+}
+
+// Single-study mode: createApp({ config, storage }). Multi-study mode: createApp({ studies: [{ config,
+// storage, source }] }); each study has its own lobby and storage, chosen by the `study` URL parameter,
+// and `/` lists them in a gallery. `source` is the raw YAML shown in the gallery.
+function createApp({ config, storage, studies, log = console.log }) {
+  const multi = Array.isArray(studies);
+  const list = (multi ? studies : [{ config, storage }]).map((s) => ({ ...createStudy({ ...s, log }), source: s.source }));
+  const byId = new Map(list.map((s) => [s.config.study.id, s]));
+  // In single-study mode the `study` parameter is ignored, so v0.1 URLs keep working.
+  const pick = (id) => (multi ? byId.get(String(id ?? '')) : list[0]);
+  const origins = [...new Set(list.flatMap((s) => s.config.embed.allowed_origins))];
+  const originAllowed = makeOriginMatcher(origins);
+
+  const app = express();
+  app.disable('x-powered-by');
+  const server = http.createServer(app);
+
+  // Only allowed origins may frame the page.
+  app.use((req, res, next) => {
+    res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${origins.join(' ')}`);
+    next();
+  });
+  // The bare URL (no participant params) is the gallery (multi) or the demo form (single);
+  // with params it is the chat page.
+  const galleryHtml = multi ? renderGallery(list) : null;
+  const showGallery = (req, res) => (multi ? res.type('html').send(galleryHtml) : res.redirect('/demo'));
+  app.get('/', (req, res, next) => (Object.keys(req.query).length ? next() : showGallery(req, res)));
+  app.get('/gallery', showGallery);
+  const demoHtml = new Map(list.map((s) => [s, renderDemo(s.config, { study: multi ? s.config.study.id : null })]));
+  app.get('/demo', (req, res) => {
+    const s = pick(req.query.study);
+    return s ? res.type('html').send(demoHtml.get(s)) : res.redirect('/gallery');
+  });
+  app.use(express.static(path.join(__dirname, '..', 'public')));
+
+  app.get('/client-config.json', (req, res) => {
+    const s = pick(req.query.study);
+    return s ? res.json(s.clientConfig()) : res.status(404).json({ error: 'unknown study' });
+  });
+
+  app.get('/healthz', (req, res) => {
+    const base = { ok: true, storage: list[0].storage.backend };
+    if (!multi) return res.json({ ...base, study: list[0].config.study.id, ...list[0].status() });
+    res.json({ ...base, studies: Object.fromEntries(list.map((s) => [s.config.study.id, s.status()])) });
+  });
+
+  app.get('/export', async (req, res) => {
+    const token = process.env.ADMIN_TOKEN;
+    const given = String(req.query.token || '');
+    const ok = token && given.length === token.length &&
+      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
+    if (!ok) return res.status(403).json({ error: 'forbidden' });
+    const s = pick(req.query.study);
+    if (!s) return res.status(400).json({ error: `study must be one of ${[...byId.keys()].join(', ')}` });
+    const data = await s.storage.exportAll();
+    if (req.query.format !== 'csv') return res.json(data);
+    const table = req.query.table || 'matches';
+    if (!KINDS.includes(table)) return res.status(400).json({ error: `table must be one of ${KINDS.join(', ')}` });
+    res.type('text/csv').attachment(`${s.config.study.id}_${table}.csv`).send(toCsv(data[table]));
+  });
+
+  const io = new Server(server, {
+    maxHttpBufferSize: 1e5,
+    // Browsers send Origin; accept our own page and the allowed embedders. Non-browser
+    // clients (no Origin) are allowed so the server can be scripted and tested.
+    allowRequest: (req, cb) => {
+      const o = req.headers.origin;
+      let self = false;
+      try { self = !!o && new URL(o).host === req.headers.host; } catch { /* malformed origin */ }
+      cb(null, !o || self || originAllowed(o));
+    },
+  });
+
   io.on('connection', (socket) => {
     const fwd = String(socket.handshake.headers['x-forwarded-for'] || '').split(',')[0].trim();
     const ip = fwd || socket.handshake.address;
-    socket.data.msgAllowed = rateLimiter(limits.messages_per_10s, 10000);
-    socket.on('join', (params) => handleJoin(socket, ip, params));
-    socket.on('message', (text) => handleMessage(socket, text));
-    socket.on('disconnect', () => handleDisconnect(socket));
+    socket.on('join', (params) => {
+      if (socket.data.entry) return;
+      if (!params || typeof params !== 'object') {
+        return socket.emit('joinError', { code: 'bad_request', message: 'Missing parameters.' });
+      }
+      const s = pick(params.study);
+      if (!s) return socket.emit('joinError', { code: 'unknown_study', message: 'Unknown study (URL parameter "study").' });
+      socket.data.msgAllowed = rateLimiter(s.config.limits.messages_per_10s, 10000);
+      s.join(socket, ip, params);
+    });
+    socket.on('message', (text) => socket.data.entry && socket.data.entry.study.message(socket.data.entry, text));
+    socket.on('disconnect', () => socket.data.entry && socket.data.entry.study.disconnect(socket.data.entry));
   });
 
   return {
     server,
     listen: (port) => new Promise((resolve) => server.listen(port, () => resolve(server.address().port))),
     close: () => new Promise((resolve) => {
-      for (const room of rooms) clearTimeout(room.timer);
-      lobby.clear();
+      for (const s of list) s.close();
       io.close(() => resolve());
     }),
   };
