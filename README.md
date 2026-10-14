@@ -61,8 +61,12 @@ participant:
     age:    {type: number}
 ```
 
-A list field may also give `options: [...]` (and optionally `pick: N`) to set the
-choices shown as chips on the `/demo` form. They do not restrict matching.
+Any field may give a `label:` (the question text on the `/demo` form). A list field may
+also give `options: [...]` (and optionally `pick: N`) to set the chips on the form, and a
+number field `min:` / `max:`. These only shape the `/demo` form and do not restrict
+matching. A condition may give a `label:` for the form's condition dropdown, and the
+config may give a top-level `title:` and one-sentence `description:` (shown on the form
+and in the gallery).
 
 Then list rules under each condition. Every rule has the same shape:
 `- rule: field` for the common case, or `- rule: {field: ..., other arguments}`.
@@ -249,6 +253,31 @@ STUDY_CONFIG=examples/demo.yaml npm start   # then open http://localhost:3000/de
 On Render, set the environment variable `STUDY_CONFIG=examples/demo.yaml`. Free instances
 sleep after about 15 minutes idle, so open the URL a minute before you demo.
 
+### Several studies on one server (examples gallery)
+
+Point `STUDY_CONFIG` (or `STUDY_DIR`) at a folder and the server hosts every `*.yaml` in
+it. Each study keeps its own waiting room and data (records carry its `study_id`), and the
+URL parameter `study=<study.id>` picks one: `/demo?study=combo`, `/?study=combo&id=...`,
+`/export?token=...&study=combo`. Study ids must be unique across the folder. `/` and
+`/gallery` list the studies as cards with the description, the `npm run explain` text,
+the raw YAML, and a "Try it" link. Single-file mode is unchanged.
+
+`examples/gallery/` holds seven pairing dynamics for demos:
+
+| Study | Dynamic |
+|---|---|
+| `shared-interest` | share at least one of three picked interests; more overlap ranks higher |
+| `cross-party` | Democrat meets Republican; reveal names the partner's party |
+| `same-vs-cross` | Qualtrics-randomized condition: same party vs. other party |
+| `opposing-views` | stances on a 1-7 scale at least 3 apart (`not: {within: ...}`) |
+| `similar-age-relax` | within 10 years of age, closest first; the age rule drops after 30s of waiting |
+| `advice-pairs` | a seeker meets a giver on the same topic; two seekers never match |
+| `combo` | cross-party AND (shared interest OR within 5 years) AND NOT the same gender |
+
+```bash
+STUDY_CONFIG=examples/gallery npm start   # then open http://localhost:3000 in two tabs or devices
+```
+
 ## Qualtrics messages
 
 The chat page talks to the generated question JavaScript with `postMessage`. The
@@ -302,7 +331,7 @@ the participant ID (ResponseID) or `chat_match_id`.
 ```bash
 npm install
 npm test                       # unit tests, command tests, and an end-to-end socket test
-LIVE_URL=https://your-app.onrender.com node --test test/live.test.js   # optional smoke test of a deployed demo
+LIVE_URL=https://your-app.onrender.com node --test test/live.test.js   # optional smoke test of a deployed gallery
 npm run validate [config ...]  # check configs; lists every problem at once
 npm run explain  [config ...]
 npm run simulate [config] [people.csv]
