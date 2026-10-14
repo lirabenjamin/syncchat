@@ -5,7 +5,8 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
-const { parseFields, pickPartner } = require('./matcher');
+const { parseFields } = require('./matcher');
+const { createLobby } = require('./lobby');
 const reveal = require('./reveal');
 const { makeOriginMatcher, patternToRegexSource } = require('./origins');
 const { KINDS, toCsv } = require('./storage');
@@ -54,7 +55,15 @@ function createApp({ config, storage, log = console.log }) {
   });
 
   // ---- live state ----
-  const waiting = Object.fromEntries(Object.keys(config.conditions).map((c) => [c, []]));
+  const lobby = createLobby(config, {
+    clock: { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout },
+    onMatch: startRoom,
+    onTimeout: (entry, waitedMs) => {
+      recordOutcome(entry, 'nomatch', { waited_ms: waitedMs });
+      entry.socket.emit('noMatch', { waited_ms: waitedMs });
+      log(`[nomatch] condition=${entry.cond}`);
+    },
+  });
   const active = new Map(); // participant id -> entry (waiting or chatting)
   const rooms = new Set();
 
@@ -63,7 +72,7 @@ function createApp({ config, storage, log = console.log }) {
       ok: true,
       study: config.study.id,
       storage: storage.backend,
-      waiting: Object.fromEntries(Object.entries(waiting).map(([c, q]) => [c, q.length])),
+      waiting: lobby.counts(),
       rooms: rooms.size,
     });
   });
@@ -95,14 +104,6 @@ function createApp({ config, storage, log = console.log }) {
 
   const joinAllowed = rateLimiter(limits.joins_per_ip_per_minute, 60000);
 
-  function removeWaiting(entry) {
-    const q = waiting[entry.cond];
-    const i = q.indexOf(entry);
-    if (i >= 0) q.splice(i, 1);
-    clearTimeout(entry.relaxTimer);
-    clearTimeout(entry.timeoutTimer);
-  }
-
   function recordOutcome(entry, outcome, extra = {}) {
     storage.record('outcomes', {
       participant_id: entry.pid, condition: entry.cond, outcome, ended_at: iso(Date.now()), ...extra,
@@ -110,35 +111,25 @@ function createApp({ config, storage, log = console.log }) {
     active.delete(entry.pid);
   }
 
-  function tryMatch(entry) {
-    const cond = config.conditions[entry.cond];
-    const now = Date.now();
-    const pool = waiting[entry.cond].filter((e) => e !== entry);
-    const choice = pickPartner(entry, pool, cond, now);
-    if (choice) startRoom(entry, choice, now);
-    return !!choice;
-  }
-
-  function startRoom(searcher, choice, now) {
-    const partner = choice.partner;
-    removeWaiting(searcher);
-    removeWaiting(partner);
-    const cond = config.conditions[searcher.cond];
-    const members = [partner, searcher]; // earlier arrival first
+  // Reveal placeholders ({partner.x}, {shared.x}) are written for dyads: "partner" is the other member.
+  function startRoom({ cond: condName, members, satisfied, waived, shared, scores, prefer, at: now }) {
+    const cond = config.conditions[condName];
     const room = {
-      id: crypto.randomUUID(), cond: searcher.cond, members, startedAt: now,
+      id: crypto.randomUUID(), cond: condName, members, startedAt: now,
       endsAt: now + timing.chat_duration_ms, counts: new Map(members.map((m) => [m, 0])), messages: [],
     };
-    const other = (m) => (m === searcher ? partner : searcher);
-    const reveals = new Map(members.map((m) => [m, cond.reveal ? reveal.render(cond.reveal, m.fields, other(m).fields) : null]));
+    const others = (m) => members.filter((x) => x !== m);
+    const reveals = new Map(members.map((m) => [m, cond.reveal ? reveal.render(cond.reveal, m.fields, others(m)[0].fields) : null]));
+    const matchReason = [...satisfied, ...waived.map((w) => `waived ${w}`)].join('; ');
     storage.record('matches', {
       match_id: room.id,
       condition: room.cond,
       participant_ids: members.map((m) => m.pid),
-      rules_satisfied: choice.satisfied,
-      rules_waived: choice.waived,
-      prefer_rules: choice.prefer,
-      scores: choice.scores,
+      rules_satisfied: satisfied,
+      rules_waived: waived,
+      shared,
+      prefer_rules: prefer,
+      scores,
       reveal: Object.fromEntries(members.map((m) => [m.pid, reveals.get(m)])),
       waited_ms: Object.fromEntries(members.map((m) => [m.pid, now - m.arrivedAt])),
       matched_at: iso(now),
@@ -151,8 +142,10 @@ function createApp({ config, storage, log = console.log }) {
         match_id: room.id,
         ends_at: room.endsAt,
         reveal: reveals.get(m),
-        intro: config.chat.intro ? reveal.render(config.chat.intro, m.fields, other(m).fields) : null,
+        intro: config.chat.intro ? reveal.render(config.chat.intro, m.fields, others(m)[0].fields) : null,
         waited_ms: now - m.arrivedAt,
+        match_reason: matchReason,
+        partner_id: others(m).map((x) => x.pid).join(','),
       });
     }
     log(`[match] condition=${room.cond} waited_ms=${members.map((m) => now - m.arrivedAt).join('/')} rooms=${rooms.size}`);
@@ -202,22 +195,12 @@ function createApp({ config, storage, log = console.log }) {
     if (active.has(pid)) return fail('duplicate_id', 'This participant ID is already connected.');
 
     const now = Date.now();
-    const entry = { pid, cond, fields, arrivedAt: now, socket };
+    const entry = { pid, cond, fields, socket };
     socket.data.entry = entry;
     active.set(pid, entry);
     storage.record('arrivals', { participant_id: pid, condition: cond, fields, arrived_at: iso(now) });
     socket.emit('waiting', { timeout_at: now + timing.match_timeout_ms });
-
-    if (tryMatch(entry)) return;
-    waiting[cond].push(entry);
-    const relaxMs = config.conditions[cond].relax_after_ms;
-    if (relaxMs !== null) entry.relaxTimer = setTimeout(() => tryMatch(entry), relaxMs);
-    entry.timeoutTimer = setTimeout(() => {
-      removeWaiting(entry);
-      recordOutcome(entry, 'nomatch', { waited_ms: Date.now() - entry.arrivedAt });
-      socket.emit('noMatch', { waited_ms: Date.now() - entry.arrivedAt });
-      log(`[nomatch] condition=${cond}`);
-    }, timing.match_timeout_ms);
+    lobby.join(entry);
   }
 
   function handleMessage(socket, text) {
@@ -241,7 +224,7 @@ function createApp({ config, storage, log = console.log }) {
     if (!entry || !active.has(entry.pid) || active.get(entry.pid) !== entry) return;
     if (entry.room) endRoom(entry.room, 'left', entry);
     else {
-      removeWaiting(entry);
+      lobby.leave(entry);
       recordOutcome(entry, 'left_waiting', { waited_ms: Date.now() - entry.arrivedAt });
     }
   }
@@ -260,7 +243,7 @@ function createApp({ config, storage, log = console.log }) {
     listen: (port) => new Promise((resolve) => server.listen(port, () => resolve(server.address().port))),
     close: () => new Promise((resolve) => {
       for (const room of rooms) clearTimeout(room.timer);
-      for (const e of active.values()) removeWaiting(e);
+      lobby.clear();
       io.close(() => resolve());
     }),
   };

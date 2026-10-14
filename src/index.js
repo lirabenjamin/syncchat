@@ -11,17 +11,10 @@ const envFile = path.join(root, '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
 async function main() {
-  const args = process.argv.slice(2);
-  const validateOnly = args.includes('--validate');
-  const files = args.filter((a) => a !== '--validate');
-  const configFiles = files.length ? files : [process.env.STUDY_CONFIG || path.join(root, 'study.yaml')];
-
+  const configFile = process.argv[2] || process.env.STUDY_CONFIG || path.join(root, 'study.yaml');
   let config;
   try {
-    for (const f of configFiles) {
-      config = loadConfig(f);
-      if (validateOnly) console.log(`OK  ${f}`);
-    }
+    config = loadConfig(configFile);
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(e.message);
@@ -29,7 +22,6 @@ async function main() {
     }
     throw e;
   }
-  if (validateOnly) return;
 
   const storage = await createStorage({
     mongoUri: process.env.MONGO_URI,

@@ -1,7 +1,5 @@
 'use strict';
 
-const rules = require('./rules');
-
 // Turn raw URL params into typed participant fields, per `participant.fields`.
 // Missing or unparseable values become null (hard rules on a null field fail).
 // Throws if a category value is outside its declared `values`.
@@ -29,21 +27,34 @@ function parseFields(params, fieldDefs) {
   return out;
 }
 
-const label = (r) => `${r.kind}: ${r.field}`;
+function intersect(lists) {
+  return lists.reduce((acc, l) => acc.filter((v) => l.includes(v)));
+}
 
-// Evaluate one candidate pair under a condition.
-// Returns null if a hard rule fails, otherwise which rules held, which were waived, and the
-// soft-score vector (one entry per `prefer` rule, compared in order).
-function evaluatePair(a, b, cond, { pairRelaxed, usePrefer }) {
+// Evaluate a whole group under a condition. Semantics are "pairwise all": a require rule holds
+// for the group only if it holds for every pair in it, and a prefer score is summed over pairs.
+// Returns null if a hard rule fails, otherwise which rules held, which were waived by relaxing,
+// the items shared by every pair (per rule), and the score vector (one entry per prefer rule).
+function evaluateGroup(members, cond, { relaxed, usePrefer }) {
+  const pairs = [];
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) pairs.push([members[i], members[j]]);
+  }
   const satisfied = [];
   const waived = [];
+  const shared = {};
   for (const r of cond.require) {
-    if (rules.check(r, a, b)) satisfied.push(label(r));
-    else if (r.relaxable && pairRelaxed) waived.push(label(r));
+    const results = pairs.map(([a, b]) => r.test(a, b));
+    if (results.every((x) => x.pass)) {
+      satisfied.push(r.label);
+      if (results.every((x) => x.shared)) shared[r.label] = intersect(results.map((x) => x.shared));
+    } else if (r.relaxable && relaxed) waived.push(r.label);
     else return null;
   }
-  const scores = usePrefer ? cond.prefer.map((r) => rules.score(r, a, b)) : [];
-  return { satisfied, waived, scores };
+  const scores = usePrefer
+    ? cond.prefer.map((r) => pairs.reduce((sum, [a, b]) => sum + r.test(a, b).score, 0))
+    : [];
+  return { satisfied, waived, shared, scores };
 }
 
 function compareScores(x, y) {
@@ -53,24 +64,26 @@ function compareScores(x, y) {
   return 0;
 }
 
-// Pick the best waiting partner for `searcher` among `candidates` (same condition).
-// Hard rules filter, soft rules rank, earliest arrival breaks ties.
-// Relaxation: a pair whose longer-waiting member has waited >= relax_after drops relaxable
-// hard rules; a searcher who has waited >= relax_after ignores `prefer` (takes the first
-// valid partner).
-function pickPartner(searcher, candidates, cond, now) {
+// The group-forming step, and the only dyad-specific code: pick the best waiting partner for
+// `searcher` among `candidates` (same condition). Hard rules filter, soft rules rank, earliest
+// arrival breaks ties. Relaxation: a group whose longest-waiting member has waited >= relax_after
+// drops relaxable hard rules; a searcher who has waited >= relax_after ignores `prefer` (takes the
+// first valid partner). Returns { members (earliest arrival first), satisfied, waived, shared,
+// scores, prefer } or null.
+function formGroup(searcher, candidates, cond, now) {
   const relax = cond.relax_after_ms;
   const usePrefer = relax == null || now - searcher.arrivedAt < relax;
   const ordered = [...candidates].sort((x, y) => x.arrivedAt - y.arrivedAt);
   let best = null;
   for (const c of ordered) {
-    const pairRelaxed = relax != null && now - Math.min(searcher.arrivedAt, c.arrivedAt) >= relax;
-    const res = evaluatePair(searcher.fields, c.fields, cond, { pairRelaxed, usePrefer });
+    const members = [c, searcher].sort((x, y) => x.arrivedAt - y.arrivedAt);
+    const relaxed = relax != null && now - Math.min(...members.map((m) => m.arrivedAt)) >= relax;
+    const res = evaluateGroup(members.map((m) => m.fields), cond, { relaxed, usePrefer });
     if (res && (!best || compareScores(res.scores, best.scores) > 0)) {
-      best = { partner: c, ...res, prefer: usePrefer ? cond.prefer.map(label) : [] };
+      best = { members, ...res, prefer: usePrefer ? cond.prefer.map((r) => r.label) : [] };
     }
   }
   return best;
 }
 
-module.exports = { parseFields, pickPartner };
+module.exports = { parseFields, evaluateGroup, formGroup };

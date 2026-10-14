@@ -129,7 +129,7 @@
 
   socket.on('matched', (m) => {
     clearInterval(ticker);
-    result = { match_id: m.match_id, waited_ms: m.waited_ms, reveal: m.reveal };
+    result = { match_id: m.match_id, waited_ms: m.waited_ms, reveal: m.reveal, match_reason: m.match_reason, partner_id: m.partner_id };
     $('banner').textContent = m.reveal || '';
     if (m.intro) add('sys', m.intro);
     add('sys', 'You are now connected. Please be respectful.');
