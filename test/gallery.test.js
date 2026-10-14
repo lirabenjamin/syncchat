@@ -8,6 +8,10 @@ const { loadStudyDir, ConfigError } = require('../src/config');
 const { createStorage } = require('../src/storage');
 const { createApp } = require('../src/app');
 const { matches, nonMatches, join } = require('./gallery-cases');
+const yaml = require('js-yaml');
+const { validateConfig } = require('../src/config');
+const { explainConfig } = require('../src/explain');
+const { ANATOMY_YAML } = require('../src/gallery');
 
 const galleryDir = path.join(__dirname, '..', 'examples', 'gallery');
 const IDS = ['shared-interest', 'cross-party', 'same-vs-cross', 'opposing-views', 'similar-age-relax', 'advice-pairs', 'combo'];
@@ -42,9 +46,38 @@ test('every gallery config validates, has a title and description, and ids are u
   assert.deepStrictEqual(studies.map((s) => s.config.study.id), IDS);
   for (const { config } of studies) {
     assert.ok(config.title && config.description, config.study.id);
+    assert.match(explainConfig(config), new RegExp(`^Study "${config.study.id}"`));
     assert.strictEqual(config.timing.match_timeout_ms, 120000);
     assert.strictEqual(config.timing.chat_duration_ms, 300000);
   }
+});
+
+test('the annotated anatomy YAML on the gallery page validates and explains', () => {
+  const config = validateConfig(yaml.load(ANATOMY_YAML));
+  assert.deepStrictEqual(Object.keys(config.conditions), ['cross', 'same']);
+  assert.match(explainConfig(config), /After someone has waited 30s, preferences are dropped/);
+});
+
+test('gallery page opens with the "How a study.yaml works" primer, then cards with example URLs', async () => {
+  const html = await (await fetch(url + '/')).text();
+  const primer = html.indexOf('<details class="primer" open>');
+  assert.ok(primer > 0 && primer < html.indexOf('<article class="card"'));
+  assert.match(html, /<summary>How a study.yaml works<\/summary>/);
+  assert.strictEqual(html.match(/<span class="n">\d<\/span>/g).length, 9); // numbered callouts
+  for (const r of ['same', 'differ', 'equals', 'overlap', 'within', 'closest', 'any_of', 'not', 'custom']) {
+    assert.match(html, new RegExp(`<td><code>${r}</code></td>`));
+  }
+  for (const p of ['shared.top3', 'me.age', 'partner.party']) assert.match(html, new RegExp(`<td><code>\\{${p}\\}</code></td>`));
+  assert.strictEqual(html.match(/What Qualtrics sends/g).length, 7);
+  for (const { config } of loadStudyDir(galleryDir)) {
+    const card = html.slice(html.indexOf(`<article class="card" id="${config.study.id}"`));
+    const sends = card.slice(card.indexOf('<code class="url">'), card.indexOf('</code>', card.indexOf('<code class="url">')));
+    const params = new URLSearchParams(sends.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/^.*\?/, ''));
+    assert.strictEqual(params.get('study'), config.study.id);
+    assert.ok(Object.hasOwn(config.conditions, params.get('cond')), config.study.id);
+    for (const f of Object.keys(config.participant.fields)) assert.ok(params.get(f), `${config.study.id}: ${f}`);
+  }
+  assert.match(html, /\?<span class="p">study=opposing-views<\/span>&amp;<span class="p">id=R_abc123<\/span>&amp;<span class="cond">cond=disagree<\/span>&amp;<span class="f">stance=2<\/span>/);
 });
 
 test('a folder with two studies sharing an id is rejected', () => {

@@ -3,11 +3,11 @@
 title: Combined rules
 description: A Democrat meets a Republican who shares an interest or is within 5 years of age, and the two never have the same gender.
 
-study:
+study:          # picked by the URL param ?study= (multi-study server)
   id: combo
 
 participant:
-  fields:
+  fields:       # each field is a URL param, from Qualtrics embedded data
     party:  {type: category, label: Your party, values: [Democrat, Republican]}
     gender: {type: category, label: Your gender, values: [Woman, Man, Nonbinary]}
     age:    {type: number, label: Your age, min: 18, max: 99}
@@ -17,22 +17,23 @@ participant:
       options: [coffee, hiking, cooking, jazz, soccer, travel]
       pick: 2
 
-conditions:
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
   combo:
-    require:
+    require:    # hard rules: all must hold
       - differ: party
       - any_of:                          # at least one of these must hold
           - overlap: {field: interests, min: 1}
           - within: {field: age, max: 5}
       - not: {same: gender}              # never the same gender
-    prefer:
+    prefer:     # rank the valid partners
       - overlap: {field: interests}      # more shared interests first
       - closest: age                     # then closer age
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
     reveal: "Your partner is a {partner.party}, a {partner.gender} aged {partner.age}."
 
-timing:
+timing:         # wait for a partner, then chat
   match_timeout: 120s
   chat_duration: 300s
 
-embed:
+embed:          # sites allowed to embed the chat
   allowed_origins: ["https://*.qualtrics.com"]

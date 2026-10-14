@@ -50,6 +50,20 @@ fork or copy it into your own account first.
 
 ## Writing matching rules
 
+The flow: Qualtrics survey → embedded data → chat iframe URL → syncchat matches by your
+rules → chat → outcome, match reason, and partner ID back to Qualtrics as embedded data.
+
+Everything syncchat matches on arrives in the iframe URL, which the generated Qualtrics
+snippet builds from embedded data, for example `?id=R_abc123&cond=cross&party=Democrat`:
+
+- `id` is the Qualtrics ResponseID.
+- `cond` is the condition, set by a randomizer in the survey flow (`participant.condition_param`).
+- every other parameter is a field from `participant.fields`, which you collect in the
+  survey (or get from a panel) and store as embedded data under the same name.
+
+The gallery page (`/` in multi-study mode) shows this as an annotated `study.yaml` with a
+numbered note on each block, and each card shows the exact URL Qualtrics sends for it.
+
 Declare each field Qualtrics passes in, with a type:
 
 ```yaml

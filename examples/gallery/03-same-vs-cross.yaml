@@ -3,28 +3,30 @@
 title: Same-party vs. cross-party (randomized)
 description: Qualtrics randomizes each person into a condition; in "same" you meet someone from your own party, in "cross" someone from the other party.
 
-study:
+study:          # picked by the URL param ?study= (multi-study server)
   id: same-vs-cross
 
 participant:
-  fields:
+  fields:       # each field is a URL param, from Qualtrics embedded data
     party: {type: category, label: Your party, values: [Democrat, Republican]}
 
-conditions:
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
   same:
     label: Same party
-    require:
+    require:    # hard rules: all must hold
       - same: party
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
     reveal: "Your partner is also a {partner.party}."
   cross:
     label: Cross party
-    require:
+    require:    # hard rules: all must hold
       - differ: party
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
     reveal: "Your partner is a {partner.party}."
 
-timing:
+timing:         # wait for a partner, then chat
   match_timeout: 120s
   chat_duration: 300s
 
-embed:
+embed:          # sites allowed to embed the chat
   allowed_origins: ["https://*.qualtrics.com"]

@@ -2,11 +2,11 @@
 title: Advice pairs
 description: Someone seeking advice is paired with someone giving advice on the same topic; two seekers never match.
 
-study:
+study:          # picked by the URL param ?study= (multi-study server)
   id: advice-pairs
 
 participant:
-  fields:
+  fields:       # each field is a URL param, from Qualtrics embedded data
     role: {type: category, label: Are you here to seek or give advice?, values: [Seeking advice, Giving advice]}
     topic:
       type: list
@@ -14,16 +14,17 @@ participant:
       options: [career, relationships, money, health]
       pick: 1
 
-conditions:
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
   advice:
-    require:
+    require:    # hard rules: all must hold
       - differ: role                      # one seeker, one giver
       - overlap: {field: topic, min: 1}   # same topic
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
     reveal: "You're paired to talk about {shared.topic}: one of you is seeking advice, the other giving it."
 
-timing:
+timing:         # wait for a partner, then chat
   match_timeout: 120s
   chat_duration: 300s
 
-embed:
+embed:          # sites allowed to embed the chat
   allowed_origins: ["https://*.qualtrics.com"]

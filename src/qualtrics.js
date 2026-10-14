@@ -290,4 +290,4 @@ function generateQualtrics(config, { url, outDir }) {
   });
 }
 
-module.exports = { generateQualtrics, normalizeUrl };
+module.exports = { generateQualtrics, normalizeUrl, chatParams };

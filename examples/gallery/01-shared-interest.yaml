@@ -2,31 +2,32 @@
 title: Shared interests
 description: You are paired with someone who picked at least one of the same three interests, and the more you share, the better.
 
-study:
+study:          # picked by the URL param ?study= (multi-study server)
   id: shared-interest
 
 participant:
-  fields:
+  fields:       # each field is a URL param, from Qualtrics embedded data
     top3:
       type: list
       label: Pick your top three interests
       options: [coffee, hiking, cooking, jazz, soccer, travel, reading, movies]
       pick: 3
 
-conditions:
+conditions:     # URL param ?cond=, set by a Qualtrics randomizer
   shared:
-    require:
+    require:    # hard rules: all must hold
       - overlap: {field: top3, min: 1}  # at least one interest in common
-    prefer:
+    prefer:     # rank the valid partners
       - overlap: {field: top3}          # more shared items ranks higher
+    # reveal: banner both see; {shared.x} {me.x} {partner.x} fill in
     reveal: "You were matched because you both picked {shared.top3}."
 
-chat:
+chat:           # intro: shown at the top of the chat
   intro: "Get to know each other: what do you love about the thing you share?"
 
-timing:
+timing:         # wait for a partner, then chat
   match_timeout: 120s
   chat_duration: 300s
 
-embed:
+embed:          # sites allowed to embed the chat
   allowed_origins: ["https://*.qualtrics.com"]   # top-level use on this site is always allowed
