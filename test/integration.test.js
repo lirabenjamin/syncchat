@@ -171,6 +171,18 @@ test('(f) messages are relayed and stored; outcomes and export work', async () =
   delete process.env.ADMIN_TOKEN;
 });
 
+test('single-study mode ignores the study= parameter the Qualtrics snippet always sends', async () => {
+  const d = join({ study: 'itest', id: 'g-dem', cond: 'same', party: 'Republican' });
+  await d.next('waiting');
+  const r = join({ study: 'anything-else', id: 'g-rep', cond: 'same', party: 'Republican' });
+  const [md, mr] = await Promise.all([d.next('matched'), r.next('matched')]);
+  assert.strictEqual(md.match_id, mr.match_id);
+  assert.strictEqual((await fetch(`${url}/client-config.json?study=itest`)).status, 200);
+  assert.strictEqual((await fetch(`${url}/?study=itest&id=x&cond=same`)).status, 200);
+  d.socket.close();
+  r.socket.close();
+});
+
 test('healthz, framing policy, and cross-origin socket rejection', async () => {
   const res = await fetch(`${url}/healthz`);
   assert.strictEqual((await res.json()).ok, true);

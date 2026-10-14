@@ -58,17 +58,66 @@ test('the annotated anatomy YAML on the gallery page validates and explains', ()
   assert.match(explainConfig(config), /After someone has waited 30s, preferences are dropped/);
 });
 
-test('gallery page opens with the "How a study.yaml works" primer, then cards with example URLs', async () => {
+test('gallery page has three linkable tabs: examples, configuration, setup', async () => {
   const html = await (await fetch(url + '/')).text();
-  const primer = html.indexOf('<details class="primer" open>');
-  assert.ok(primer > 0 && primer < html.indexOf('<article class="card"'));
-  assert.match(html, /<summary>How a study.yaml works<\/summary>/);
-  assert.strictEqual(html.match(/<span class="n">\d<\/span>/g).length, 9); // numbered callouts
-  for (const r of ['same', 'differ', 'equals', 'overlap', 'within', 'closest', 'any_of', 'not', 'custom']) {
-    assert.match(html, new RegExp(`<td><code>${r}</code></td>`));
+  for (const id of ['examples', 'configuration', 'setup']) {
+    assert.match(html, new RegExp(`<a href="#${id}">`));
+    assert.match(html, new RegExp(`<section id="${id}" class="tab">`));
   }
-  for (const p of ['shared.top3', 'me.age', 'partner.party']) assert.match(html, new RegExp(`<td><code>\\{${p}\\}</code></td>`));
-  assert.strictEqual(html.match(/What Qualtrics sends/g).length, 7);
+  const at = (id) => html.indexOf(`<section id="${id}"`);
+  const firstCard = html.indexOf('<article class="card"');
+  assert.ok(at('examples') < firstCard && firstCard < at('configuration') && at('configuration') < at('setup'));
+  assert.match(html, /Open a card in two tabs or two phones and give compatible answers\./);
+});
+
+test('configuration tab: anatomy, field types, rules, settings, custom rule, and real explain/simulate output', async () => {
+  const html = await (await fetch(url + '/')).text();
+  const conf = html.slice(html.indexOf('<section id="configuration"'), html.indexOf('<section id="setup"'));
+  assert.match(conf, /<h2>How a study.yaml works<\/h2>/);
+  assert.strictEqual(conf.match(/<span class="n">\d<\/span>/g).length, 9); // numbered callouts
+  for (const t of ['category', 'list', 'number']) assert.match(conf, new RegExp(`<td><code>${t}</code></td>`));
+  for (const r of ['same', 'differ', 'equals', 'overlap', 'within', 'closest', 'any_of', 'not', 'custom']) {
+    assert.match(conf, new RegExp(`<td><code>${r}</code></td>`));
+  }
+  for (const p of ['shared.top3', 'me.age', 'partner.party']) assert.match(conf, new RegExp(`<td><code>\\{${p}\\}</code></td>`));
+  // Defaults in the settings table match the validator's.
+  const config = validateConfig(yaml.load(ANATOMY_YAML));
+  const setting = (k) => conf.match(new RegExp(`<td><code>${k}</code></td><td>(.*?)</td>`))[1];
+  assert.strictEqual(setting('participant.id_param'), `<code>${config.participant.id_param}</code>`);
+  assert.strictEqual(setting('participant.condition_param'), `<code>${config.participant.condition_param}</code>`);
+  assert.strictEqual(setting('timing.min_messages'), `<code>${config.timing.min_messages}</code>`);
+  assert.strictEqual(setting('on_timeout'), `<code>${config.on_timeout}</code>`);
+  for (const [k, v] of Object.entries(config.limits)) assert.strictEqual(setting(`limits.${k}`), `<code>${v}</code>`);
+  assert.match(conf, /custom: \{file: \.\/rules\/same_decade\.js, field: age\}/);
+  for (const cmd of ['npm run validate', 'npm run explain', 'npm run simulate']) assert.ok(conf.includes(cmd), cmd);
+  assert.ok(conf.includes('Condition &quot;cross&quot;: partners must (1) have different party'));
+  assert.match(conf, /MATCH +\[cross\] p3 \+ p6/); // prefer closest age picks p3 over p5
+  assert.match(conf, /TIMEOUT +\[cross\] p5/);
+});
+
+test('setup tab: accounts, every env var the code reads, ordered steps, troubleshooting', async () => {
+  const html = await (await fetch(url + '/')).text();
+  const setup = html.slice(html.indexOf('<section id="setup"'), html.indexOf('</main>'));
+  // Every process.env.X read in src/ (npm_config_* is set by npm itself, not by the researcher).
+  const src = path.join(__dirname, '..', 'src');
+  const vars = new Set(fs.readdirSync(src).flatMap((f) =>
+    [...fs.readFileSync(path.join(src, f), 'utf8').matchAll(/process\.env\.([A-Za-z_]+)/g)].map((m) => m[1]))
+    .filter((v) => !v.startsWith('npm_config_')));
+  assert.deepStrictEqual([...vars].sort(), ['ADMIN_TOKEN', 'DATA_DIR', 'MONGO_URI', 'PORT', 'STUDY_CONFIG', 'STUDY_DIR']);
+  for (const v of vars) assert.match(setup, new RegExp(`<td><code>${v}</code></td>`), v);
+  assert.match(setup, /No AI or LLM API keys are needed/);
+  for (const a of ['GitHub', 'Render', 'MongoDB Atlas', 'Qualtrics']) assert.match(setup, new RegExp(`<b>${a}</b>`));
+  const steps = [...setup.matchAll(/<li><h3>(.*?)<\/h3>/g)].map((m) => m[1]);
+  assert.deepStrictEqual(steps, ['Get the code', 'Set up MongoDB Atlas', 'Write your study.yaml and check it', 'Deploy to Render',
+    'Test the live app', 'Add the chat to Qualtrics', 'Pilot', 'Recruit', 'Download the data', 'IRB and privacy']);
+  for (const s of ['0.0.0.0/0', 'npm run qualtrics -- --url', '/export?token=', 'format=csv&amp;table=messages', 'chat_outcome = nomatch',
+    'npm install --omit=dev', '/healthz']) assert.ok(setup.includes(s), s);
+  assert.match(setup, /<h2>Troubleshooting<\/h2>/);
+});
+
+test('example cards show the URL Qualtrics sends', async () => {
+  const html = await (await fetch(url + '/')).text();
+  assert.strictEqual(html.match(/<span class="label">What Qualtrics sends/g).length, 7);
   for (const { config } of loadStudyDir(galleryDir)) {
     const card = html.slice(html.indexOf(`<article class="card" id="${config.study.id}"`));
     const sends = card.slice(card.indexOf('<code class="url">'), card.indexOf('</code>', card.indexOf('<code class="url">')));
@@ -78,6 +127,14 @@ test('gallery page opens with the "How a study.yaml works" primer, then cards wi
     for (const f of Object.keys(config.participant.fields)) assert.ok(params.get(f), `${config.study.id}: ${f}`);
   }
   assert.match(html, /\?<span class="p">study=opposing-views<\/span>&amp;<span class="p">id=R_abc123<\/span>&amp;<span class="cond">cond=disagree<\/span>&amp;<span class="f">stance=2<\/span>/);
+});
+
+test('"study" is reserved as a field or parameter name', () => {
+  const base = yaml.load(ANATOMY_YAML);
+  base.participant.fields.study = { type: 'category' };
+  base.participant.condition_param = 'study';
+  assert.throws(() => validateConfig(base), (e) => e instanceof ConfigError &&
+    e.errors.some((m) => m.startsWith('participant.fields.study')) && e.errors.some((m) => m.startsWith('participant.condition_param')));
 });
 
 test('a folder with two studies sharing an id is rejected', () => {
@@ -97,7 +154,7 @@ test('gallery lists all studies with explanation, YAML, and a Try it link', asyn
     const html = await res.text();
     assert.strictEqual(html.match(/<article class="card"/g).length, 7);
     for (const id of IDS) assert.match(html, new RegExp(`href="/demo\\?study=${id}">Try it`));
-    assert.match(html, /Open in two tabs or two phones/);
+    assert.match(html, /Open a card in two tabs or two phones/);
     assert.match(html, /partners must NOT have stance within 2 of each other/); // explain output
     assert.match(html, /<span class="c"># NOT within 2 points/);               // YAML comments kept
   }

@@ -21,7 +21,13 @@ attribute-based chat pairing, and generates every Qualtrics piece from your conf
 
 ## Quickstart (about 15 minutes)
 
-You need Node.js 20.12 or newer and a Qualtrics account that can import `.qsf` files.
+The **Setup** tab of the live demo, <https://syncchat-demo.onrender.com/#setup>, walks
+through these steps in more detail, with accounts, costs, and every setting.
+
+You need Node.js 20.12 or newer, a GitHub account, a Render account (about $7/month on
+the Starter plan while collecting data; free instances sleep and restarts end live chats),
+a free MongoDB Atlas database, and a Qualtrics account that can import `.qsf` files.
+No AI or LLM API keys are needed.
 
 1. **Install.** Clone this repo, then `npm install`.
 2. **Write your rules.** Edit `study.yaml` (or start from a file in `examples/`). Run
@@ -31,12 +37,17 @@ You need Node.js 20.12 or newer and a Qualtrics account that can import `.qsf` f
 4. **Simulate.** `npm run simulate study.yaml examples/people.csv` runs the real
    matcher on fake arrivals and prints who matched, why, how long they waited, and
    the match rate. Edit `people.csv` to look like your sample.
-5. **Deploy.** Copy `.env.example` to `.env` and set `ADMIN_TOKEN`. Click "Deploy to
-   Render" (or create a Render Web Service; `render.yaml` holds the settings) and set
-   `ADMIN_TOKEN` and `MONGO_URI` in the dashboard. Render wipes its disk on restart,
-   so use MongoDB there. Check `https://your-app.onrender.com/healthz`.
+5. **Deploy.** In MongoDB Atlas, create a free cluster, a database user, and network
+   access from `0.0.0.0/0`; copy the connection string from Connect > Drivers and add a
+   database name (`.../syncchat?...`). That is `MONGO_URI`. In Render, create a
+   Blueprint from your repo (`render.yaml` holds the settings and generates
+   `ADMIN_TOKEN`) or click "Deploy to Render", and set `MONGO_URI`. Render wipes its
+   disk on restart, so use MongoDB there. Check `https://your-app.onrender.com/healthz`
+   shows `"storage":"mongo"`.
 6. **Generate the Qualtrics files.** `npm run qualtrics -- --url https://your-app.onrender.com`
-   writes `qualtrics/generated/`.
+   writes `qualtrics/generated/`. The chat URL always includes `study=<study.id>`;
+   a single-study server ignores it, so the same files keep working if you later host
+   several studies on one server.
 7. **Import.** In Qualtrics, create a project from `syncchat_template.qsf`, add your
    own questions before the chat block, and set each matching field from them. The
    generated `CHECKLIST.md` lists every embedded-data field and where its value comes
@@ -61,8 +72,9 @@ snippet builds from embedded data, for example `?id=R_abc123&cond=cross&party=De
 - every other parameter is a field from `participant.fields`, which you collect in the
   survey (or get from a panel) and store as embedded data under the same name.
 
-The gallery page (`/` in multi-study mode) shows this as an annotated `study.yaml` with a
-numbered note on each block, and each card shows the exact URL Qualtrics sends for it.
+The gallery page (`/` in multi-study mode) has three tabs: **Examples** (each card shows
+the exact URL Qualtrics sends), **Configuration** (an annotated `study.yaml` with a numbered
+note on each block, field types, rules, and defaults), and **Setup** (the step-by-step guide).
 
 Declare each field Qualtrics passes in, with a type:
 
@@ -272,9 +284,10 @@ sleep after about 15 minutes idle, so open the URL a minute before you demo.
 Point `STUDY_CONFIG` (or `STUDY_DIR`) at a folder and the server hosts every `*.yaml` in
 it. Each study keeps its own waiting room and data (records carry its `study_id`), and the
 URL parameter `study=<study.id>` picks one: `/demo?study=combo`, `/?study=combo&id=...`,
-`/export?token=...&study=combo`. Study ids must be unique across the folder. `/` and
-`/gallery` list the studies as cards with the description, the `npm run explain` text,
-the raw YAML, and a "Try it" link. Single-file mode is unchanged.
+`/export?token=...&study=combo`. Study ids must be unique across the folder, and `study`
+cannot be a field name. `/` and `/gallery` show the tabbed page: the studies as cards with
+the description, the `npm run explain` text, the raw YAML, and a "Try it" link, plus the
+Configuration and Setup guides. Single-file mode is unchanged and ignores `study=`.
 
 `examples/gallery/` holds seven pairing dynamics for demos:
 

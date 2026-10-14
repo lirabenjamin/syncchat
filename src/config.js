@@ -123,6 +123,12 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
     fields[name] = f;
   }
 
+  // `study` is always sent in the chat URL, so it cannot be a field or a parameter name.
+  if (fields.study) err('participant.fields.study', '"study" is reserved (the chat URL always sends study=<study.id>); rename the field');
+  for (const k of ['id_param', 'condition_param']) {
+    if (part[k] === 'study') err(`participant.${k}`, '"study" is reserved; pick another name');
+  }
+
   function parseRule(entry, path, soft) {
     let rule;
     try {

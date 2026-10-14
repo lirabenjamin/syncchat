@@ -30,10 +30,12 @@ function normalizeUrl(url) {
 
 const piped = (field) => '${e://Field/' + field + '}';
 
-// The URL parameters the chat question sends, as [param, Qualtrics piped text].
+// The URL parameters the chat question sends, as [param, value or Qualtrics piped text].
+// `study` picks the study on a server hosting several; a single-study server ignores it.
 function chatParams(config) {
   const { id_param: idParam, condition_param: condParam, fields } = config.participant;
   return [
+    ['study', config.study.id],
     [idParam, piped('ResponseID')],
     [condParam, piped(condParam)],
     ...Object.keys(fields).map((f) => [f, piped(f)]),
