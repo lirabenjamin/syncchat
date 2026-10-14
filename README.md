@@ -302,6 +302,7 @@ the participant ID (ResponseID) or `chat_match_id`.
 ```bash
 npm install
 npm test                       # unit tests, command tests, and an end-to-end socket test
+LIVE_URL=https://your-app.onrender.com node --test test/live.test.js   # optional smoke test of a deployed demo
 npm run validate [config ...]  # check configs; lists every problem at once
 npm run explain  [config ...]
 npm run simulate [config] [people.csv]
