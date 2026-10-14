@@ -78,7 +78,7 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
       err(path, `needs a type: one of ${FIELD_TYPES.join(', ')}`);
       continue;
     }
-    section(def, path, { category: ['type', 'values'], list: ['type', 'sep'], number: ['type'] }[def.type]);
+    section(def, path, { category: ['type', 'values'], list: ['type', 'sep', 'options', 'pick'], number: ['type'] }[def.type]);
     const f = { type: def.type };
     if (def.type === 'category' && def.values !== undefined) {
       if (!Array.isArray(def.values) || !def.values.length) err(`${path}.values`, 'must be a non-empty list');
@@ -87,6 +87,22 @@ function validateConfig(raw, { baseDir = process.cwd() } = {}) {
     if (def.type === 'list') {
       if (def.sep !== undefined && (typeof def.sep !== 'string' || !def.sep)) err(`${path}.sep`, 'must be a non-empty string');
       f.sep = def.sep || ',';
+      // options/pick only shape the /demo form; matching still accepts any list item.
+      if (def.options !== undefined) {
+        if (!Array.isArray(def.options) || !def.options.length) err(`${path}.options`, 'must be a non-empty list');
+        else {
+          f.options = def.options.map(String);
+          if (new Set(f.options).size !== f.options.length) err(`${path}.options`, 'must not repeat items');
+          const bad = f.options.find((o) => !o.trim() || o.includes(f.sep));
+          if (bad !== undefined) err(`${path}.options`, `"${bad}" is empty or contains the separator "${f.sep}"`);
+        }
+      }
+      if (def.pick !== undefined) {
+        if (!f.options) err(`${path}.pick`, 'needs options');
+        else if (!Number.isInteger(def.pick) || def.pick < 1 || def.pick > f.options.length) {
+          err(`${path}.pick`, `must be a whole number from 1 to ${f.options.length}`);
+        } else f.pick = def.pick;
+      }
     }
     fields[name] = f;
   }

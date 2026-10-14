@@ -70,6 +70,18 @@ test('bad configs give clear errors', () => {
   expectError((c) => { c.conditions.cross.require.push({ custom: './nope.js' }); }, /file not found/);
 });
 
+test('list options and pick (demo form)', () => {
+  const ok = base();
+  ok.participant.fields.top3 = { type: 'list', options: ['a', 'b', 'c'], pick: 2 };
+  assert.deepStrictEqual(validateConfig(ok).participant.fields.top3, { type: 'list', sep: ',', options: ['a', 'b', 'c'], pick: 2 });
+  expectError((c) => { c.participant.fields.top3.options = []; }, /options: must be a non-empty list/);
+  expectError((c) => { c.participant.fields.top3.options = ['a', 'a']; }, /must not repeat/);
+  expectError((c) => { c.participant.fields.top3.options = ['a,b']; }, /contains the separator/);
+  expectError((c) => { c.participant.fields.top3.pick = 2; }, /pick: needs options/);
+  expectError((c) => { c.participant.fields.top3.options = ['a']; c.participant.fields.top3.pick = 2; }, /from 1 to 1/);
+  expectError((c) => { c.participant.fields.age.options = [1, 2]; }, /age.options: unknown key/);
+});
+
 test('all errors are reported at once', () => {
   const raw = base();
   raw.study.group_size = 3;

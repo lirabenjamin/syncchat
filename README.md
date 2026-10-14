@@ -61,6 +61,9 @@ participant:
     age:    {type: number}
 ```
 
+A list field may also give `options: [...]` (and optionally `pick: N`) to set the
+choices shown as chips on the `/demo` form. They do not restrict matching.
+
 Then list rules under each condition. Every rule has the same shape:
 `- rule: field` for the common case, or `- rule: {field: ..., other arguments}`.
 
@@ -227,6 +230,24 @@ durations, and lists every problem at once.
 Run one locally with `STUDY_CONFIG=examples/same-vs-cross.yaml npm start`, then open
 two windows such as `http://localhost:3000/?id=a&cond=same&party=Democrat&age=30` and
 `http://localhost:3000/?id=b&cond=same&party=Democrat&age=35`.
+
+## Live demo without Qualtrics
+
+`GET /demo` is a mobile-friendly form built from your config: category fields with
+`values` become dropdowns, list fields with `options` become pick-N chips, numbers become
+number inputs, and the condition becomes a dropdown when there is more than one. It
+generates a random participant ID and opens the chat page top-level. The bare URL `/`
+redirects to `/demo`.
+
+`examples/demo.yaml` is tuned for showing syncchat live: pick three interests, get paired
+with anyone who shares one, and see the shared items in the banner.
+
+```bash
+STUDY_CONFIG=examples/demo.yaml npm start   # then open http://localhost:3000/demo in two tabs or devices
+```
+
+On Render, set the environment variable `STUDY_CONFIG=examples/demo.yaml`. Free instances
+sleep after about 15 minutes idle, so open the URL a minute before you demo.
 
 ## Qualtrics messages
 

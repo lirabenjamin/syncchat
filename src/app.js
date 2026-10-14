@@ -10,6 +10,7 @@ const { createLobby } = require('./lobby');
 const reveal = require('./reveal');
 const { makeOriginMatcher, patternToRegexSource } = require('./origins');
 const { KINDS, toCsv } = require('./storage');
+const { renderDemo } = require('./demo');
 
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -42,6 +43,10 @@ function createApp({ config, storage, log = console.log }) {
     res.setHeader('Content-Security-Policy', `frame-ancestors 'self' ${embed.allowed_origins.join(' ')}`);
     next();
   });
+  // The bare URL (no participant params) goes to the demo form; with params it is the chat page.
+  app.get('/', (req, res, next) => (Object.keys(req.query).length ? next() : res.redirect('/demo')));
+  const demoHtml = renderDemo(config);
+  app.get('/demo', (req, res) => res.type('html').send(demoHtml));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   app.get('/client-config.json', (req, res) => {
