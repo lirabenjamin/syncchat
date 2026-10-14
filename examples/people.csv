@@ -1,0 +1,17 @@
+id,cond,party,gender,top3,age,arrival_s
+p01,cross,Democrat,Woman,"pizza,tacos,sushi",34,0
+p02,cross,Democrat,Man,"chess,hiking",52,3
+p03,cross,Republican,Man,"sushi,ramen",41,8
+p04,cross,Republican,Woman,"hiking,chess,golf",50,12
+p05,cross,Democrat,Man,"golf",23,20
+p06,cross,Republican,Man,"knitting",27,35
+p07,cross,Democrat,Nonbinary,"opera",65,40
+p08,same,Democrat,Woman,"pizza",29,2
+p09,same,Republican,Man,"ramen",45,6
+p10,same,Democrat,Man,"tacos",31,15
+p11,same,Republican,Woman,"chess",60,90
+p12,shared,,Woman,"hiking,cooking,chess",28,0
+p13,shared,,Man,"chess,cooking",60,5
+p14,shared,,Woman,"hiking,cooking",31,10
+p15,shared,,Man,"opera",40,12
+p16,shared,,Woman,"opera,chess",70,40

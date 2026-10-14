@@ -2,7 +2,8 @@
 
 const fs = require('fs');
 const yaml = require('js-yaml');
-const { PRIMITIVES, isObject } = require('./rules');
+const path = require('path');
+const { compileRule, isObject } = require('./rules');
 const { placeholders } = require('./reveal');
 const { isValidPattern } = require('./origins');
 
@@ -23,7 +24,8 @@ function parseDuration(v) {
   return Math.round(Number(m[1]) * { ms: 1, s: 1000, m: 60000 }[m[2]]);
 }
 
-function validateConfig(raw) {
+// baseDir: where `custom:` rule paths are resolved from (the config file's folder).
+function validateConfig(raw, { baseDir = process.cwd() } = {}) {
   const errors = [];
   const err = (path, msg) => errors.push(`${path}: ${msg}`);
 
@@ -61,7 +63,7 @@ function validateConfig(raw) {
     err('study.id', 'must be a string of letters, numbers, - or _');
   }
   const groupSize = study.group_size ?? 2;
-  if (groupSize !== 2) err('study.group_size', 'v1 supports dyads only; set it to 2');
+  if (groupSize !== 2) err('study.group_size', 'only 2 is supported for now (dyads); rules are pairwise, so larger groups need only a new group-forming step');
 
   // participant
   const part = section(raw.participant, 'participant', ['id_param', 'condition_param', 'fields']);
@@ -90,59 +92,19 @@ function validateConfig(raw) {
   }
 
   function parseRule(entry, path, soft) {
-    if (!isObject(entry)) {
-      err(path, 'must be a rule like `differ: party`');
-      return null;
-    }
-    const kinds = Object.keys(entry).filter((k) => k !== 'relaxable');
-    if (kinds.length !== 1) {
-      err(path, `must contain exactly one rule (found ${kinds.length ? kinds.join(', ') : 'none'})`);
-      return null;
-    }
-    const kind = kinds[0];
-    const prim = PRIMITIVES[kind];
-    if (!prim) {
-      err(path, `unknown rule "${kind}" (known: ${Object.keys(PRIMITIVES).join(', ')})`);
-      return null;
-    }
-    // `relaxable` may sit next to the rule or inside its argument mapping.
-    let arg = entry[kind];
-    if (isObject(arg) && 'relaxable' in arg) {
-      const { relaxable, ...rest } = arg;
-      entry = { ...entry, relaxable };
-      arg = rest;
-    }
     let rule;
     try {
-      rule = { kind, ...prim.parse(arg) };
+      rule = compileRule(entry, { fields, baseDir });
     } catch (e) {
-      err(`${path}.${kind}`, e.message);
+      err(path, e.message);
       return null;
     }
-    const field = fields[rule.field];
-    if (!field) {
-      err(`${path}.${kind}`, `unknown field "${rule.field}" (declare it under participant.fields)`);
-      return null;
-    }
-    if (!prim.types.includes(field.type)) {
-      err(`${path}.${kind}`, `needs a ${prim.types.join(' or ')} field, but "${rule.field}" is ${field.type}`);
-      return null;
-    }
-    if (prim.softOnly && !soft) err(path, `"${kind}" ranks partners, so it belongs under prefer (use "within" as a hard rule)`);
-    if (entry.relaxable !== undefined) {
+    if (rule.preferOnly && !soft) err(path, `"${rule.name}" ranks partners, so it belongs under prefer (use "within" as a hard rule)`);
+    if (rule.relaxable !== undefined) {
       if (soft) err(`${path}.relaxable`, 'only applies to require rules');
-      else if (typeof entry.relaxable !== 'boolean') err(`${path}.relaxable`, 'must be true or false');
+      else if (typeof rule.relaxable !== 'boolean') err(`${path}.relaxable`, 'must be true or false');
     }
-    if (kind === 'equals') {
-      if (field.type === 'number' && typeof rule.value !== 'number') err(`${path}.equals.value`, 'must be a number');
-      if (field.type === 'category') {
-        rule.value = String(rule.value);
-        if (field.values && !field.values.includes(rule.value)) {
-          err(`${path}.equals.value`, `"${rule.value}" is not one of ${rule.field}'s values`);
-        }
-      }
-    }
-    rule.relaxable = entry.relaxable === true;
+    rule.relaxable = rule.relaxable === true;
     return rule;
   }
 
@@ -249,7 +211,7 @@ function loadConfig(file) {
     throw new ConfigError([e.code === 'ENOENT' ? 'file not found' : `YAML syntax error: ${e.message}`], file);
   }
   try {
-    return validateConfig(raw);
+    return validateConfig(raw, { baseDir: path.dirname(path.resolve(file)) });
   } catch (e) {
     if (e instanceof ConfigError) throw new ConfigError(e.errors, file);
     throw e;

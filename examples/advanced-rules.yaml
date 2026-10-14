@@ -1,0 +1,34 @@
+# Example 4: combining rules with any_of, not, and a custom rule file.
+# Cross-party pairs who either share a top-3 item OR are in the same age decade,
+# never two men, preferring closer ages.
+study:
+  id: advanced-rules
+  group_size: 2
+
+participant:
+  id_param: id
+  condition_param: cond
+  fields:
+    party:  {type: category, values: [Democrat, Republican]}
+    gender: {type: category, values: [Woman, Man, Nonbinary]}
+    top3:   {type: list, sep: ","}
+    age:    {type: number}
+
+conditions:
+  cross:
+    require:
+      - differ: party
+      - any_of:                                  # at least one of these must hold
+          - overlap: {field: top3, min: 1}
+          - custom: {file: ./rules/same_decade.js, field: age}   # path is relative to this file
+      - not: {equals: {field: gender, value: Man}}               # not both men
+    prefer:
+      - closest: age
+    reveal: "Your partner is a {partner.party}."
+
+timing:
+  match_timeout: 60s
+  chat_duration: 3m
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]

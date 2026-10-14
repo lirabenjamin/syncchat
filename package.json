@@ -1,13 +1,16 @@
 {
   "name": "syncchat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Synchronous participant-to-participant chat for Qualtrics studies, with matching rules in one YAML file",
   "main": "src/index.js",
   "private": true,
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "validate": "node src/index.js --validate"
+    "validate": "node src/cli.js validate",
+    "explain": "node src/cli.js explain",
+    "simulate": "node src/cli.js simulate",
+    "qualtrics": "node src/cli.js qualtrics"
   },
   "dependencies": {
     "express": "^4.19.2",
