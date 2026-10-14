@@ -1,5 +1,7 @@
 # syncchat
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23372978.svg)](https://doi.org/10.5281/zenodo.23372978)
+
 syncchat pairs Qualtrics participants by rules you write in one YAML file and runs a live, timed one-on-one chat between them inside the survey.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/lirabenjamin/syncchat)
@@ -433,7 +435,12 @@ rather than committing it.
 
 If you use syncchat in published research, please cite it. The citation metadata is in
 [`CITATION.cff`](CITATION.cff); GitHub's "Cite this repository" button turns it into
-APA or BibTeX. A DOI will come with the first Zenodo-archived release.
+APA or BibTeX. Ready-to-paste APA citation:
+
+> Lira Luttges, B. (2026). *syncchat: Synchronous participant chat with configurable matching for Qualtrics studies* (Version 0.3.0) [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.23372978
+
+The concept DOI above always resolves to the latest version. To cite v0.3.0 specifically,
+use the version DOI [10.5281/zenodo.23372979](https://doi.org/10.5281/zenodo.23372979).
 
 ## License
 

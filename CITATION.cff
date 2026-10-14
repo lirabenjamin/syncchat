@@ -8,6 +8,14 @@ authors:
     affiliation: "The Wharton School, University of Pennsylvania"
     orcid: "https://orcid.org/0000-0001-5328-0657"
 version: 0.3.0
+doi: 10.5281/zenodo.23372978
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23372978
+    description: "Concept DOI (all versions; resolves to the latest)"
+  - type: doi
+    value: 10.5281/zenodo.23372979
+    description: "Version DOI for v0.3.0"
 date-released: "2026-10-14"
 repository-code: "https://github.com/lirabenjamin/syncchat"
 url: "https://syncchat-demo.onrender.com"
