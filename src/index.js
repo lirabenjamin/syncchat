@@ -39,6 +39,9 @@ async function main() {
   const ids = studies.map((s) => s.config.study.id).join('", "');
   console.log(`syncchat: ${multi ? 'studies' : 'study'} "${ids}" listening on port ${port} (storage: ${studies[0].storage.backend})`);
   if (!process.env.ADMIN_TOKEN) console.log('syncchat: ADMIN_TOKEN not set, /export is disabled');
+  // AI partners read their key from the environment variable named in ai.api_key_env (the name only is logged).
+  const keyNames = new Set(studies.flatMap((s) => Object.values(s.config.conditions).filter((c) => c.ai).map((c) => c.ai.api_key_env)));
+  for (const k of keyNames) if (!process.env[k]) console.log(`syncchat: ${k} not set, AI partner chats will end with ai_error`);
 
   const shutdown = async () => {
     await app.close();
