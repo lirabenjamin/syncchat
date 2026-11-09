@@ -105,7 +105,7 @@ test('setup tab: accounts, every env var the code reads, ordered steps, troubles
     .filter((v) => !v.startsWith('npm_config_')));
   assert.deepStrictEqual([...vars].sort(), ['ADMIN_TOKEN', 'DATA_DIR', 'MONGO_URI', 'PORT', 'STUDY_CONFIG', 'STUDY_DIR']);
   for (const v of vars) assert.match(setup, new RegExp(`<td><code>${v}</code></td>`), v);
-  assert.match(setup, /No AI or LLM API keys are needed/);
+  assert.match(setup, /No AI or LLM API keys are needed for chats between participants/);
   for (const a of ['GitHub', 'Render', 'MongoDB Atlas', 'Qualtrics']) assert.match(setup, new RegExp(`<b>${a}</b>`));
   const steps = [...setup.matchAll(/<li><h3>(.*?)<\/h3>/g)].map((m) => m[1]);
   assert.deepStrictEqual(steps, ['Get the code', 'Set up MongoDB Atlas', 'Write your study.yaml and check it', 'Deploy to Render',

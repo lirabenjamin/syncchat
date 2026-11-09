@@ -60,7 +60,7 @@ test('bad configs give clear errors', () => {
   expectError((c) => { c.conditions.cross.relax_afer = '10s'; }, /relax_afer: unknown key/);
   expectError((c) => { c.participant.fields.age.type = 'integer'; }, /needs a type/);
   expectError((c) => { c.timing.chat_duration = 'three minutes'; }, /not a duration/);
-  expectError((c) => { c.on_timeout = 'bot'; }, /not supported yet/);
+  expectError((c) => { c.on_timeout = 'bot'; }, /on_timeout: bot needs an ai block/);
   expectError((c) => { c.embed.allowed_origins = ['*']; }, /no bare \*/);
   expectError((c) => { c.conditions = {}; }, /at least one condition/);
   expectError((c) => { c.conditions.cross.require.push({ any_of: [{ same: 'party' }] }); }, /at least 2 rules/);

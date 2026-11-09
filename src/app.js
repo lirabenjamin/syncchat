@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 const { parseFields } = require('./matcher');
 const { createLobby } = require('./lobby');
 const reveal = require('./reveal');
+const ai = require('./ai');
 const { makeOriginMatcher, patternToRegexSource } = require('./origins');
 const { KINDS, toCsv } = require('./storage');
 const { renderDemo } = require('./demo');
@@ -31,17 +32,23 @@ function rateLimiter(max, windowMs) {
   };
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const between = ({ min, max }) => min + Math.random() * (max - min);
+
 // One study's live state: its waiting room, active participants, and chat rooms.
 // A room runs its condition's stages in order (a chat without `stages` is one unnamed stage).
 // After a `then: qualtrics` stage the room stays reserved: both members rejoin from a later chat
 // question (stage=<next id>) and the next stage starts once both are back.
-function createStudy({ config, storage, log }) {
+// A room with an AI partner has one human member and one bot member ({ bot: true, pid: 'ai' }); the
+// bot's socket is a stub whose 'message' events trigger a model call (callModel, injectable for tests).
+function createStudy({ config, storage, log, callModel = ai.callModel }) {
   const { participant, limits, embed } = config;
 
   const lobby = createLobby(config, {
     clock: { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout },
     onMatch: startRoom,
     onTimeout: (entry, waitedMs) => {
+      if (config.on_timeout === 'bot' && config.conditions[entry.cond].ai) return startAiRoom(entry, { fallback: true, waitedMs });
       recordOutcome(entry, 'nomatch', { waited_ms: waitedMs });
       entry.socket.emit('noMatch', { waited_ms: waitedMs });
       log(`[nomatch] study=${config.study.id} condition=${entry.cond}`);
@@ -51,6 +58,7 @@ function createStudy({ config, storage, log }) {
   const finished = new Map(); // participant id -> final chatEnded payload of a staged chat, for late rejoins
   const rooms = new Set();
   const joinAllowed = rateLimiter(limits.joins_per_ip_per_minute, 60000);
+  const tokensUsed = new Map(); // condition -> AI tokens spent by this server process (for budget_tokens)
 
   function recordOutcome(entry, outcome, extra = {}) {
     storage.record('outcomes', {
@@ -60,16 +68,18 @@ function createStudy({ config, storage, log }) {
   }
 
   const partnerOf = (room, m) => room.members.find((x) => x !== m);
+  const humans = (room) => room.members.filter((m) => !m.bot);
   const fill = (room, m, tmpl) => (tmpl ? reveal.render(tmpl, m.fields, partnerOf(room, m).fields) : null);
 
   // Reveal placeholders ({partner.x}, {shared.x}) are written for dyads: "partner" is the other member.
-  function startRoom({ cond: condName, members, satisfied, waived, shared, scores, prefer, at: now }) {
+  function startRoom({ cond: condName, members, satisfied, waived, shared, scores, prefer, at: now, bot = null }) {
     const cond = config.conditions[condName];
     const room = {
-      id: crypto.randomUUID(), cond: condName, def: cond, members, messages: [], phase: 'chat',
+      id: crypto.randomUUID(), cond: condName, def: cond, members, messages: [], phase: 'chat', bot,
       totals: new Map(members.map((m) => [m, 0])), metAll: new Map(members.map((m) => [m, true])),
     };
-    const reveals = new Map(members.map((m) => [m, fill(room, m, cond.reveal)]));
+    // A fallback AI partner has no fields, so the condition's reveal (written for two people) is not shown.
+    const reveals = new Map(members.map((m) => [m, bot && bot.fallback ? null : fill(room, m, cond.reveal)]));
     const matchReason = [...satisfied, ...waived.map((w) => `waived ${w}`)].join('; ');
     storage.record('matches', {
       match_id: room.id,
@@ -81,8 +91,16 @@ function createStudy({ config, storage, log }) {
       prefer_rules: prefer,
       scores,
       reveal: Object.fromEntries(members.map((m) => [m.pid, reveals.get(m)])),
-      waited_ms: Object.fromEntries(members.map((m) => [m.pid, now - m.arrivedAt])),
+      waited_ms: Object.fromEntries(humans(room).map((m) => [m.pid, now - m.arrivedAt])),
       matched_at: iso(now),
+      ...(bot ? {
+        partner: 'ai',
+        ai_fallback: bot.fallback,
+        ai: {
+          provider: bot.def.provider, model: bot.def.model, system_prompt: bot.system, system_prompt_file: bot.def.system_prompt_file,
+          opening_message: bot.opening, vars: bot.vars,
+        },
+      } : {}),
     });
     rooms.add(room);
     for (const m of members) {
@@ -90,7 +108,7 @@ function createStudy({ config, storage, log }) {
       m.connected = true;
     }
     beginStage(room, 0, now);
-    for (const m of members) {
+    for (const m of humans(room)) {
       m.socket.emit('matched', {
         match_id: room.id,
         ends_at: room.stage.endsAt,
@@ -102,7 +120,89 @@ function createStudy({ config, storage, log }) {
         stage: stageInfo(room, m),
       });
     }
-    log(`[match] study=${config.study.id} condition=${room.cond} waited_ms=${members.map((m) => now - m.arrivedAt).join('/')} rooms=${rooms.size}`);
+    log(`[match] study=${config.study.id} condition=${room.cond}${bot ? ` partner=ai${bot.fallback ? ' (fallback)' : ''}` : ''} waited_ms=${humans(room).map((m) => now - m.arrivedAt).join('/')} rooms=${rooms.size}`);
+    if (bot && bot.opening) postMessage(room, bot.member, bot.opening, { sender: 'ai', model: null, usage: null }); // scripted, not generated
+  }
+
+  // Pair a participant with the condition's AI partner: right away (partner: ai) or after
+  // match_timeout (on_timeout: bot). Fails closed if the token budget is spent.
+  function startAiRoom(entry, { fallback = false, waitedMs = 0 } = {}) {
+    const def = config.conditions[entry.cond].ai;
+    if (def.budget_tokens !== null && (tokensUsed.get(entry.cond) || 0) >= def.budget_tokens) return failAlone(entry, 'ai_budget_exhausted', waitedMs);
+    const values = entry.promptValues;
+    const member = { pid: 'ai', bot: true, cond: entry.cond, fields: {}, connected: true, arrivedAt: Date.now() };
+    const bot = {
+      def, fallback, member, turns: 0, busy: false, pending: false, calls: [],
+      system: ai.renderPrompt(def.system_prompt, values),
+      opening: def.opening_message ? ai.renderPrompt(def.opening_message, values) : null,
+      vars: Object.fromEntries(def.uses.map((n) => [n, values[n]])),
+    };
+    member.socket = { emit: (ev, payload) => { if (ev === 'message' && !payload.mine) botHeard(member.room); }, disconnect() {} };
+    startRoom({ cond: entry.cond, members: [entry, member], satisfied: [], waived: [], shared: {}, scores: [], prefer: [], at: Date.now(), bot });
+  }
+
+  // An AI chat that cannot start: the participant gets the outcome straight away.
+  function failAlone(entry, outcome, waitedMs) {
+    recordOutcome(entry, outcome, { waited_ms: waitedMs, partner: 'ai' });
+    entry.socket.emit('chatEnded', { outcome, end_reason: outcome, message_count: 0, met_min_messages: false, waited_ms: waitedMs });
+    log(`[${outcome}] study=${config.study.id} condition=${entry.cond}`);
+  }
+
+  function botHeard(room) {
+    if (!room || room.ended || room.bot.turns >= room.bot.def.max_turns) return;
+    room.bot.pending = true;
+    if (!room.bot.busy) botTurn(room);
+  }
+
+  // One AI reply: wait out the per-participant call limit, call the model (one retry on a timeout,
+  // rate limit, or server error), then post the reply no sooner than reply_delay after the message
+  // that prompted it. Messages that arrive meanwhile are answered in the next turn.
+  async function botTurn(room) {
+    const bot = room.bot;
+    const def = bot.def;
+    bot.busy = true;
+    bot.pending = false;
+    const due = Date.now() + between(def.reply_delay_ms);
+    const live = () => !room.ended && room.phase === 'chat';
+    try {
+      bot.calls = bot.calls.filter((t) => Date.now() - t < 60000);
+      if (bot.calls.length >= def.calls_per_minute) await sleep(60000 - (Date.now() - bot.calls[0]));
+      if (!live()) return;
+      if (def.budget_tokens !== null && (tokensUsed.get(room.cond) || 0) >= def.budget_tokens) return failRoom(room, 'ai_budget_exhausted');
+      bot.calls.push(Date.now());
+      const req = { system: bot.system, messages: room.messages.slice() };
+      let res;
+      try {
+        res = await callModel(def, req);
+      } catch (e) {
+        if (!e.retry || !live()) throw e;
+        await sleep(1000);
+        res = await callModel(def, req);
+      }
+      const usage = res.usage || { input_tokens: 0, output_tokens: 0 };
+      tokensUsed.set(room.cond, (tokensUsed.get(room.cond) || 0) + usage.input_tokens + usage.output_tokens);
+      if (!res.text) throw new Error('the model returned no text');
+      await sleep(due - Date.now());
+      if (!live()) return;
+      postMessage(room, bot.member, res.text, { sender: 'ai', model: res.model, usage });
+      bot.turns += 1;
+    } catch (e) {
+      log(`[ai_error] study=${config.study.id} condition=${room.cond} ${e.message}`);
+      return failRoom(room, 'ai_error');
+    } finally {
+      bot.busy = false;
+    }
+    if (bot.turns >= def.max_turns) {
+      // Spend cap reached: give the participant a moment to read the last reply, then end the chat.
+      room.timer && clearTimeout(room.timer);
+      room.timer = setTimeout(() => endStage(room, 'max_turns', null, 'completed'), Math.max(5000, def.reply_delay_ms.max));
+      return;
+    }
+    if (bot.pending && live()) botTurn(room);
+  }
+
+  function failRoom(room, outcome) {
+    endStage(room, outcome, null, outcome);
   }
 
   // What the chat page needs to show the current stage to member m.
@@ -159,12 +259,12 @@ function createStudy({ config, storage, log }) {
   function stageTimeUp(room) {
     const s = room.stage;
     if (s.endsAt === null) return endStage(room, 'max_duration');
-    const short = room.members.some((m) => s.counts.get(m) < s.def.min_messages);
+    const short = humans(room).some((m) => s.counts.get(m) < s.def.min_messages);
     if (s.extended || !short || !s.def.extend_until_min_ms) return endStage(room, 'timer');
     s.extended = true;
     s.endsAt = Date.now() + s.def.extend_until_min_ms;
     armTimer(room, s.def.extend_until_min_ms);
-    for (const m of room.members) m.socket.emit('stageExtended', { ends_at: s.endsAt, min_messages: s.def.min_messages });
+    for (const m of humans(room)) m.socket.emit('stageExtended', { ends_at: s.endsAt, min_messages: s.def.min_messages });
   }
 
   function stageEndPayload(room, m) {
@@ -181,7 +281,8 @@ function createStudy({ config, storage, log }) {
   }
 
   // reason: timer, max_duration, min_reached, both_done, either_done, or left (with the leaver).
-  function endStage(room, reason, leaver = null) {
+  // last: end the whole chat whatever stage it is in, with this outcome (an AI partner's max_turns or failure).
+  function endStage(room, reason, leaver = null, last = null) {
     if (room.ended || room.phase !== 'chat') return;
     clearTimeout(room.timer);
     const s = room.stage;
@@ -205,10 +306,10 @@ function createStudy({ config, storage, log }) {
       clicked_done: room.members.filter((m) => s.done.has(m)).map((m) => m.pid),
     });
     if (reason === 'left') return finishRoom(room, reason, (m) => (m === leaver ? 'left' : 'partner_left'), leaver);
-    if (!s.def.then) return finishRoom(room, reason, () => 'completed');
+    if (!s.def.then || last) return finishRoom(room, reason, () => last || 'completed');
     if (s.def.then === 'continue') {
       beginStage(room, room.stageIndex + 1, now);
-      for (const m of room.members) m.socket.emit('stageStarted', stageInfo(room, m));
+      for (const m of humans(room)) m.socket.emit('stageStarted', stageInfo(room, m));
       return;
     }
     // then: qualtrics. The survey moves on; each member rejoins with stage=<next id>.
@@ -231,11 +332,12 @@ function createStudy({ config, storage, log }) {
     clearTimeout(room.rejoinTimer);
     rooms.delete(room);
     const staged = room.def.staged;
-    for (const m of room.members) {
+    for (const m of humans(room)) {
       clearTimeout(m.graceTimer);
       const outcome = outcomeOf(m);
       const extra = {
-        match_id: room.id, message_count: room.totals.get(m), met_min_messages: room.metAll.get(m), end_reason: endReason,
+        match_id: room.id, message_count: room.totals.get(m) ?? 0, met_min_messages: room.metAll.get(m), end_reason: endReason,
+        ...(room.bot ? { partner: 'ai' } : {}),
         ...(staged ? {
           stage: room.stage.def.id,
           stage_message_count: room.stage.counts.get(m),
@@ -252,7 +354,7 @@ function createStudy({ config, storage, log }) {
       if (staged) finished.set(m.pid, payload);
       if (m !== leaver) m.socket.emit('chatEnded', payload);
     }
-    log(`[end] study=${config.study.id} condition=${room.cond} outcome=${endReason} messages=${room.messages.length}`);
+    log(`[end] study=${config.study.id} condition=${room.cond}${room.bot ? ' partner=ai' : ''} outcome=${endReason} messages=${room.messages.length}`);
   }
 
   function join(socket, ip, params) {
@@ -283,12 +385,27 @@ function createStudy({ config, storage, log }) {
       return fail('invalid_field', e.message);
     }
     if (active.has(pid)) return fail('duplicate_id', 'This participant ID is already connected.');
+    const aiDef = config.conditions[cond].ai;
+    let prompt = null;
+    if (aiDef) {
+      prompt = ai.promptValues(aiDef, params, fields);
+      if (prompt.missing.length && aiDef.missing_vars === 'error') {
+        return fail('missing_var', `Missing information for the chat (URL parameter${prompt.missing.length > 1 ? 's' : ''} ${prompt.missing.map((n) => `"${n}"`).join(', ')}).`);
+      }
+    }
 
     const now = Date.now();
-    const entry = { pid, cond, fields, socket, study: api };
+    const entry = { pid, cond, fields, socket, study: api, promptValues: prompt && prompt.values };
     socket.data.entry = entry;
     active.set(pid, entry);
-    storage.record('arrivals', { participant_id: pid, condition: cond, fields, arrived_at: iso(now) });
+    storage.record('arrivals', {
+      participant_id: pid, condition: cond, fields, arrived_at: iso(now),
+      ...(prompt ? { prompt_vars: Object.fromEntries(Object.keys(aiDef.vars).map((n) => [n, prompt.values[n]])) } : {}),
+    });
+    if (config.conditions[cond].partner === 'ai') {
+      entry.arrivedAt = now;
+      return startAiRoom(entry);
+    }
     socket.emit('waiting', { timeout_at: now + timing.match_timeout_ms });
     lobby.join(entry);
   }
@@ -334,16 +451,22 @@ function createStudy({ config, storage, log }) {
     if (!entry.socket.data.msgAllowed(entry.pid)) return entry.socket.emit('rateLimited');
     const clean = String(text ?? '').trim().slice(0, limits.max_message_length);
     if (!clean) return;
+    postMessage(room, entry, clean, room.bot ? { sender: 'participant' } : {});
+  }
+
+  // Store and relay one message. extra: in a room with an AI partner, sender (participant or ai),
+  // plus the model id and token usage for AI messages.
+  function postMessage(room, from, text, extra) {
     const s = room.stage;
-    const msg = { from: entry, text: clean, ts: Date.now(), stage: s.def.id, stageIndex: room.stageIndex };
+    const msg = { from, text, ts: Date.now(), stage: s.def.id, stageIndex: room.stageIndex };
     room.messages.push(msg);
-    s.counts.set(entry, s.counts.get(entry) + 1);
+    s.counts.set(from, s.counts.get(from) + 1);
     storage.record('messages', {
-      match_id: room.id, participant_id: entry.pid, seq: room.messages.length, text: clean, ts: iso(msg.ts),
-      ...(room.def.staged ? { stage: s.def.id } : {}),
+      match_id: room.id, participant_id: from.pid, seq: room.messages.length, text, ts: iso(msg.ts),
+      ...(room.def.staged ? { stage: s.def.id } : {}), ...extra,
     });
-    for (const m of room.members) m.socket.emit('message', { mine: m === entry, text: clean, ts: msg.ts });
-    if (s.extended && room.members.every((m) => s.counts.get(m) >= s.def.min_messages)) endStage(room, 'min_reached');
+    for (const m of room.members) m.socket.emit('message', { mine: m === from, text, ts: msg.ts });
+    if (s.extended && humans(room).every((m) => s.counts.get(m) >= s.def.min_messages)) endStage(room, 'min_reached');
   }
 
   // The Done button. Enforced here: only with end_when both_done/either_done, and only after min_messages.
@@ -355,8 +478,8 @@ function createStudy({ config, storage, log }) {
     const sent = s.counts.get(entry);
     if (sent < s.def.min_messages) return entry.socket.emit('doneRejected', { sent, min_messages: s.def.min_messages });
     s.done.add(entry);
-    if (s.def.end_when === 'either_done' || s.done.size === room.members.length) return endStage(room, s.def.end_when);
-    for (const m of room.members) m.socket.emit('doneUpdate', { done: s.done.has(m), partner_done: s.done.has(partnerOf(room, m)) });
+    if (s.def.end_when === 'either_done' || humans(room).every((m) => s.done.has(m))) return endStage(room, s.def.end_when);
+    for (const m of humans(room)) m.socket.emit('doneUpdate', { done: s.done.has(m), partner_done: s.done.has(partnerOf(room, m)) });
   }
 
   function disconnect(entry, socket) {
@@ -408,9 +531,10 @@ function createStudy({ config, storage, log }) {
 // Single-study mode: createApp({ config, storage }). Multi-study mode: createApp({ studies: [{ config,
 // storage, source }] }); each study has its own lobby and storage, chosen by the `study` URL parameter,
 // and `/` lists them in a gallery. `source` is the raw YAML shown in the gallery.
-function createApp({ config, storage, studies, log = console.log }) {
+// callModel: replaces the real model call (tests inject a fake one).
+function createApp({ config, storage, studies, log = console.log, callModel }) {
   const multi = Array.isArray(studies);
-  const list = (multi ? studies : [{ config, storage }]).map((s) => ({ ...createStudy({ ...s, log }), source: s.source }));
+  const list = (multi ? studies : [{ config, storage }]).map((s) => ({ ...createStudy({ ...s, log, callModel }), source: s.source }));
   const byId = new Map(list.map((s) => [s.config.study.id, s]));
   // In single-study mode the `study` parameter is ignored, so v0.1 URLs keep working.
   const pick = (id) => (multi ? byId.get(String(id ?? '')) : list[0]);

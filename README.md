@@ -29,7 +29,7 @@ through these steps in more detail, with accounts, costs, and every setting.
 You need Node.js 20.12 or newer, a GitHub account, a Render account (about $7/month on
 the Starter plan while collecting data; free instances sleep and restarts end live chats),
 a free MongoDB Atlas database, and a Qualtrics account that can import `.qsf` files.
-No AI or LLM API keys are needed.
+No AI or LLM API keys are needed, unless you add an [AI partner](#ai-partner).
 
 1. **Install.** Fork <https://github.com/lirabenjamin/syncchat> (or download the ZIP
    and push it to a new repository), clone your copy, then `npm install`.
@@ -246,7 +246,8 @@ relaxing, so write the sentence to survive that, or keep that rule strict.
 | `conditions.<name>.timing` | none | any `timing` key for this condition; overrides the global value |
 | `stages` / `conditions.<name>.stages` | none | several rounds with the same partner (below) |
 | `chat.intro` | none | a line shown at the top of every chat, e.g. the topic; placeholders allowed |
-| `on_timeout` | `nomatch` | only `nomatch` in v1; a `bot` fallback partner is planned |
+| `on_timeout` | `nomatch` | `nomatch` shows the "no partner" screen; `bot` starts a chat with the AI partner in `ai` |
+| `conditions.<name>.partner` | `human` | `ai`: chat with an AI partner right away (see [AI partner](#ai-partner)) |
 | `embed.allowed_origins` | required | sites allowed to embed the chat and receive its messages |
 | `embed.redirect_url` | null | if the chat is opened directly (not in an iframe), Continue goes here; `{id}` and `{outcome}` are filled in |
 | `embed.send_transcript_to_parent` | false | also send the transcript to Qualtrics as `chat_transcript` |
@@ -307,6 +308,65 @@ block per stage separated by a placeholder question; later chat questions skip t
 if the chat already ended. Outside Qualtrics (`/demo`), a `qualtrics` stage shows "In your
 study, your Qualtrics survey would show here" and a button that rejoins the same partner.
 
+### AI partner
+
+A condition with `partner: ai` pairs each participant with an AI right away.
+`on_timeout: bot` gives anyone who waits `match_timeout` without a partner the same AI
+instead of the "no partner" screen. Your server makes every model call with your own
+key, read from an environment variable; the key never reaches the survey, the browser,
+or a URL. See `examples/ai-partner.yaml` and `examples/prompts/outgroup.md`.
+
+```yaml
+conditions:
+  ai:
+    partner: ai                       # no matching rules
+ai:                                   # top level, or under a condition (overrides the top level)
+  provider: anthropic                 # anthropic | openai | openrouter
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY      # the NAME of the env var, never the key
+  system_prompt: prompts/outgroup.md  # inline text, or a .md/.txt file next to the study file
+  opening_message: "Hi! What issue matters most to you?"   # leave out: the participant starts
+  vars:                               # prompt-only values from Qualtrics
+    issue_text: "${q://QID5/ChoiceTextEntryValue}"        # or a list: [issue_text] = embedded data
+  max_turns: 15
+  reply_delay: {min: 2s, max: 6s}
+on_timeout: bot                       # optional fallback for the human conditions
+```
+
+**Prompt variables.** Write `{name}` in `system_prompt` or `opening_message`. A name is
+either a matching field (`{party}`) or a var under `ai.vars` (`{issue_text}`). A var is
+listed by name (Qualtrics sends the embedded data field of that name) or mapped to any
+Qualtrics piped text, such as an earlier question's answer. `npm run qualtrics` puts each
+var's piped text in a hidden element of `chat-question.html`, and the question
+JavaScript reads it from there into the chat URL, so answers with quotes or line breaks
+are safe. `CHECKLIST.md` explains how to set a var from an earlier question. The
+validator rejects an unknown `{name}`, a var no prompt uses, and a var that shadows a
+field. Each value is trimmed and capped at `max_var_length` (1000) characters; if one
+the prompt uses is empty, the join fails (`missing_var`) unless `missing_vars: empty`.
+
+| `ai.` setting | Default | Meaning |
+|---|---|---|
+| `provider` | `anthropic` | `anthropic`, `openai`, or `openrouter` |
+| `model` | `claude-sonnet-5-5` / `gpt-5-mini` | any model id; `openrouter` has no default |
+| `api_key_env` | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | name of the env var holding the key |
+| `system_prompt` | required | inline text or a file path; `{name}` placeholders |
+| `opening_message` | none | the AI's first message; without it the participant speaks first |
+| `vars` | none | prompt-only values (list of names, or name: piped text) |
+| `missing_vars` | `error` | `error` or `empty` |
+| `max_var_length` | 1000 | characters kept per var |
+| `max_tokens` | 1000 | per reply, including any model reasoning |
+| `effort` | `low` | reasoning effort (anthropic, openai); `null` for models without it |
+| `temperature` | none | openai/openrouter only; current Claude models reject it |
+| `max_turns` | 20 | AI replies per chat; then the chat ends (`end_reason: max_turns`) |
+| `reply_delay` | `{min: 2s, max: 5s}` | random wait before each reply, so it feels typed |
+| `calls_per_minute` | 10 | model calls per chat per minute; messages sent meanwhile are answered together |
+| `budget_tokens` | none | tokens a condition may spend per server run; then `ai_budget_exhausted` |
+| `timeout` | `30s` | per call; one retry on a timeout, rate limit, or server error |
+
+The chat fails closed: a failed call ends it with outcome `ai_error`, a spent budget with
+`ai_budget_exhausted`, and both go back to Qualtrics as `chat_outcome`. `chat_partner_id`
+is `ai`. A chat with an AI partner cannot use `then: qualtrics` stages yet.
+
 ### Example configs
 
 | File | Design |
@@ -315,6 +375,7 @@ study, your Qualtrics survey would show here" and a button that rejoins the same
 | [`examples/shared-top3.yaml`](examples/shared-top3.yaml) | pair people who share a top-3 choice, prefer more overlap and similar age, reveal the shared items |
 | [`examples/same-vs-cross.yaml`](examples/same-vs-cross.yaml) | Qualtrics randomizes `same` vs `cross` party pairing |
 | [`examples/advanced-rules.yaml`](examples/advanced-rules.yaml) | `any_of`, `not`, and a `custom` rule file together |
+| [`examples/ai-partner.yaml`](examples/ai-partner.yaml) | human partner from the other party vs an AI that plays one, with a prompt that uses `{party}` and an earlier answer; unmatched people fall back to the AI |
 
 Run one locally with `STUDY_CONFIG=examples/same-vs-cross.yaml npm start`, then open
 two windows such as `http://localhost:3000/?id=a&cond=same&party=Democrat&age=30` and
@@ -390,10 +451,10 @@ otherwise to five files in `./data/`.
 
 | Record | Contents |
 |---|---|
-| `arrivals` | participant ID, condition, parsed fields, arrival time |
-| `matches` | match ID, both IDs (earlier arrival first), condition, rules satisfied, rules waived by relaxing, `prefer` rules used and their scores, reveal text per person, wait time per person |
-| `messages` | match ID, sender ID, sequence number, text, time, and `stage` in a chat with stages |
-| `outcomes` | one per person: `completed`, `partner_left`, `left`, `no_rejoin`, `nomatch`, or `left_waiting`, plus message count, `met_min_messages`, `end_reason` (`timer`, `both_done`, `either_done`, `max_duration`, `min_reached`, `left`, `no_rejoin`), and the last `stage` |
+| `arrivals` | participant ID, condition, parsed fields, arrival time, and `prompt_vars` when the condition has an AI |
+| `matches` | match ID, both IDs (earlier arrival first), condition, rules satisfied, rules waived by relaxing, `prefer` rules used and their scores, reveal text per person, wait time per person; with an AI partner, `partner: ai`, `ai_fallback`, and `ai` (provider, model, the full rendered `system_prompt`, opening message, prompt values) |
+| `messages` | match ID, sender ID, sequence number, text, time, and `stage` in a chat with stages; with an AI partner also `sender` (`participant` or `ai`) and, for AI messages, `model` and token `usage` |
+| `outcomes` | one per person: `completed`, `partner_left`, `left`, `no_rejoin`, `nomatch`, `left_waiting`, `ai_error`, or `ai_budget_exhausted`, plus message count, `met_min_messages`, `end_reason` (`timer`, `both_done`, `either_done`, `max_duration`, `min_reached`, `left`, `no_rejoin`), and the last `stage` |
 | `stages` | chats with stages: one per stage with start/end time, end reason, per-person message counts and `met_min_messages`, and who clicked Done |
 
 Download everything with `GET /export?token=ADMIN_TOKEN` (JSON), or one table as CSV
@@ -411,6 +472,12 @@ the participant ID (ResponseID) or `chat_match_id`.
 - Only sites in `embed.allowed_origins` can frame the page, open a chat connection
   from a browser, or receive its messages. `/export` needs `ADMIN_TOKEN`.
 - Keep `.env` out of version control (it is in `.gitignore`).
+- With an AI partner, messages and prompt variables go to the model provider you chose,
+  under your account's data terms. Name the provider in your consent form. If
+  participants may not know their partner is an AI (including the `on_timeout: bot`
+  fallback), your IRB must approve the deception and the debriefing.
+- The AI token budget (`budget_tokens`) is counted in memory, so it resets when the
+  server restarts. Also set a spend limit in your provider's console.
 - Matching state lives in memory. Run a single instance, and avoid redeploying while
   a session is live: a restart ends all active chats.
 - If a participant's connection drops mid-chat, the chat ends for both people

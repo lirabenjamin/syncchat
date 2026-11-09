@@ -71,7 +71,10 @@ function simulate(config, rows) {
   const clock = simulatedClock();
   const events = [];
   const skipped = [];
-  const summary = Object.fromEntries(condNames.map((c) => [c, { arrivals: 0, matched: 0, timed_out: 0 }]));
+  const summary = Object.fromEntries(condNames.map((c) => [c, {
+    arrivals: 0, matched: 0, timed_out: 0, with_ai: 0, ...(config.conditions[c].partner === 'ai' ? { ai_partner: true } : {}),
+  }]));
+  const bot = config.on_timeout === 'bot';
 
   const lobby = createLobby(config, {
     clock,
@@ -88,8 +91,8 @@ function simulate(config, rows) {
       summary[cond].matched += members.length;
     },
     onTimeout: (entry, waitedMs) => {
-      events.push({ type: 'timeout', at: clock.now(), cond: entry.cond, id: entry.id, waited_ms: waitedMs });
-      summary[entry.cond].timed_out += 1;
+      events.push({ type: bot ? 'fallback' : 'timeout', at: clock.now(), cond: entry.cond, id: entry.id, waited_ms: waitedMs });
+      summary[entry.cond][bot ? 'with_ai' : 'timed_out'] += 1;
     },
   });
 
@@ -109,7 +112,9 @@ function simulate(config, rows) {
     }
     clock.setTimer(() => {
       summary[cond].arrivals += 1;
-      lobby.join({ id, cond, fields: parsed });
+      if (config.conditions[cond].partner !== 'ai') return lobby.join({ id, cond, fields: parsed });
+      events.push({ type: 'ai', at: clock.now(), cond, id });
+      summary[cond].with_ai += 1;
     }, arrival * 1000);
   });
   clock.run();
@@ -129,6 +134,10 @@ function formatSimulation({ events, skipped, summary }) {
       if (e.scores.length) out.push(`           prefer scores: [${e.scores.join(', ')}]`);
       out.push(`           waited: ${e.members.map((m) => `${m.id} ${formatDuration(m.waited_ms)}`).join(', ')}`);
       for (const m of e.members) if (m.reveal) out.push(`           ${m.id} sees: "${m.reveal}"`);
+    } else if (e.type === 'ai') {
+      out.push(`t=${secs(e.at).padEnd(6)} AI       [${e.cond}] ${e.id} (chats with the AI partner)`);
+    } else if (e.type === 'fallback') {
+      out.push(`t=${secs(e.at).padEnd(6)} AI       [${e.cond}] ${e.id} (waited ${formatDuration(e.waited_ms)}, no partner; chats with the AI instead)`);
     } else {
       out.push(`t=${secs(e.at).padEnd(6)} TIMEOUT  [${e.cond}] ${e.id} (waited ${formatDuration(e.waited_ms)}, no partner)`);
     }
@@ -137,10 +146,12 @@ function formatSimulation({ events, skipped, summary }) {
     out.push('', `Skipped ${skipped.length} row(s):`);
     for (const s of skipped) out.push(`  ${s.id}: ${s.reason}`);
   }
-  out.push('', 'Summary', '  condition        arrivals  matched  timed out  match rate');
+  // "with AI" only appears for studies with an AI partner; match rate counts human partners only.
+  const ai = Object.values(summary).some((s) => s.with_ai);
+  out.push('', 'Summary', `  condition        arrivals  matched  timed out${ai ? '  with AI' : ''}  match rate`);
   for (const [c, s] of Object.entries(summary)) {
-    const rate = s.arrivals ? `${Math.round((100 * s.matched) / s.arrivals)}%` : '-';
-    out.push(`  ${c.padEnd(16)} ${String(s.arrivals).padStart(8)} ${String(s.matched).padStart(8)} ${String(s.timed_out).padStart(10)} ${rate.padStart(11)}`);
+    const rate = s.arrivals && !s.ai_partner ? `${Math.round((100 * s.matched) / s.arrivals)}%` : '-';
+    out.push(`  ${c.padEnd(16)} ${String(s.arrivals).padStart(8)} ${String(s.matched).padStart(8)} ${String(s.timed_out).padStart(10)}${ai ? String(s.with_ai).padStart(9) : ''} ${rate.padStart(11)}`);
   }
   return out.join('\n');
 }

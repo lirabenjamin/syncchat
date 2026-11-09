@@ -15,7 +15,28 @@ function numbered(items, joiner) {
   return items.map((x, i) => `(${i + 1}) ${x}`).join(joiner);
 }
 
-function explainCondition(name, cond) {
+// The AI partner in plain English: model, key, who speaks first, prompt variables, and spend caps.
+function describeAi(ai, fields) {
+  const parts = [`${ai.provider} model ${ai.model}, with the API key from the environment variable ${ai.api_key_env}`];
+  const out = [`The AI partner is the ${parts[0]}.`];
+  out.push(`Its system prompt is ${ai.system_prompt_file ? `the file ${ai.system_prompt_file}` : 'written inline'}.`);
+  out.push(ai.opening_message ? `The AI speaks first: "${ai.opening_message}"` : 'The participant speaks first.');
+  if (ai.uses.length) {
+    const used = ai.uses.map((n) => (fields[n] ? `{${n}} (matching field)` : `{${n}} (from Qualtrics: ${ai.vars[n]})`));
+    out.push(`The prompt fills in ${used.join(', ')} for each participant; if one is empty, ${ai.missing_vars === 'error' ? 'the chat does not start (error: missing_var)' : 'it is left blank'}.`);
+  }
+  out.push(`Replies take ${formatDuration(ai.reply_delay_ms.min)} to ${formatDuration(ai.reply_delay_ms.max)}; after ${ai.max_turns} AI replies the chat ends (end_reason: max_turns).`);
+  const budget = ai.budget_tokens !== null ? `, or once this condition has spent ${ai.budget_tokens} tokens on this server run (outcome: ai_budget_exhausted)` : '';
+  out.push(`The chat ends early if a model call fails (outcome: ai_error)${budget}.`);
+  return out.join(' ');
+}
+
+function explainCondition(name, cond, fields) {
+  if (cond.partner === 'ai') {
+    const parts = [`Condition "${name}": each participant chats with an AI partner, right away (no matching).`, describeAi(cond.ai, fields)];
+    parts.push(cond.reveal ? `Participants see: "${cond.reveal}"` : 'No banner is shown.');
+    return parts.join(' ');
+  }
   const req = cond.require;
   const parts = [];
   parts.push(req.length
@@ -84,21 +105,31 @@ function explainConfig(config) {
     lines.push(`Participants only match within their own condition (URL parameter "${participant.condition_param}").`);
   }
   // Timing shared by every condition is stated once at the end; otherwise each condition states its own.
+  const human = names.filter((n) => conditions[n].partner !== 'ai');
   const chats = names.map((n) => describeStages(conditions[n]));
   const waits = names.map((n) => conditions[n].timing.match_timeout_ms);
   const sameChat = chats.every((c) => c.join() === chats[0].join());
-  const sameWait = waits.every((w) => w === waits[0]);
-  const noMatch = (ms) => `Anyone without a partner after ${formatDuration(ms)} sees a "no partner" screen (outcome: nomatch).`;
+  const sameWait = names.every((n, i) => conditions[n].partner === 'ai' || waits[i] === waits[names.indexOf(human[0])]);
+  const bot = config.on_timeout === 'bot';
+  const aiCond = names.find((n) => conditions[n].partner === 'ai');
+  const sameAi = !!aiCond && names.every((n) => !conditions[n].ai || JSON.stringify(conditions[n].ai) === JSON.stringify(conditions[aiCond].ai));
+  const noMatch = (ms) => (bot
+    ? `Anyone without a partner after ${formatDuration(ms)} chats with ${sameAi ? 'the AI partner described above' : 'an AI partner'} instead (no banner; outcome records say partner: ai).`
+    : `Anyone without a partner after ${formatDuration(ms)} sees a "no partner" screen (outcome: nomatch).`);
   lines.push('');
   names.forEach((name, i) => {
-    lines.push(explainCondition(name, conditions[name]));
-    if (!sameWait) lines.push(noMatch(waits[i]));
+    lines.push(explainCondition(name, conditions[name], participant.fields));
+    if (!sameWait && conditions[name].partner !== 'ai') lines.push(noMatch(waits[i]));
+    // The fallback AI is described where it differs from the AI condition's (or there is none).
+    if (bot && conditions[name].partner !== 'ai' && !sameAi) {
+      lines.push(`Its fallback AI: ${describeAi(conditions[name].ai, participant.fields)}`);
+    }
     if (!sameChat) lines.push(...chats[i]);
   });
   lines.push('');
   const simple = sameChat && !conditions[names[0]].staged;
   const last = [];
-  if (sameWait) last.push(noMatch(waits[0]));
+  if (sameWait && human.length) last.push(noMatch(conditions[human[0]].timing.match_timeout_ms));
   if (simple) last.push(chats[0][0].replace(/^The chat lasts /, 'Chats last '));
   if (last.length) lines.push(last.join(' '));
   if (sameChat && !simple) lines.push(...chats[0]);

@@ -280,10 +280,12 @@
     Object.assign(result, { outcome: e.outcome, match_id: e.match_id, message_count: e.message_count, met_min_messages: e.met_min_messages, end_reason: e.end_reason });
     if (e.stage) Object.assign(result, { stage: e.stage, stage_message_count: e.stage_message_count, stage_met_min_messages: e.stage_met_min_messages });
     if (e.transcript) result.transcript = e.transcript;
-    const titles = { partner_left: 'Chat ended', no_rejoin: 'Chat ended' };
+    const titles = { partner_left: 'Chat ended', no_rejoin: 'Chat ended', ai_error: 'Chat ended', ai_budget_exhausted: 'Chat ended' };
     const subs = {
       partner_left: 'Your partner left the conversation. Your responses have been recorded.',
       no_rejoin: 'This conversation has ended.',
+      ai_error: 'The conversation could not continue because of a technical problem. You can continue with the study.',
+      ai_budget_exhausted: 'The conversation is not available right now. You can continue with the study.',
     };
     finish(titles[e.outcome] || 'Chat complete', subs[e.outcome] || 'Thank you for chatting.');
     notify('chat_ended');

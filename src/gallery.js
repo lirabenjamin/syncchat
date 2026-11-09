@@ -84,6 +84,53 @@ participant: {}
 embed: {allowed_origins: ["https://*.qualtrics.com"]}
 `;
 
+// The annotated AI partner example on the Configuration tab (validated when the page renders).
+const AI_YAML = `conditions:
+  human:
+    require: [{differ: party}]
+  ai:
+    partner: ai                        # chat with an AI right away; no matching rules
+    reveal: false
+
+ai:                                    # or under a condition, for that condition only
+  provider: anthropic                  # anthropic, openai, or openrouter
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY       # NAME of the server's environment variable, never the key
+  system_prompt: |                     # inline text, or a file such as prompts/partner.md
+    You are chatting with a {party}. You support the other party.
+    Earlier they wrote: "{prior_answer}". Reply in one to three short sentences.
+  opening_message: "Hi! What issue matters most to you?"   # leave out to let the participant start
+  vars: [prior_answer]                 # prompt-only values, sent by Qualtrics in the chat URL
+  max_turns: 15                        # AI replies per chat
+  reply_delay: {min: 2s, max: 6s}
+
+on_timeout: bot                        # "human" participants with no partner chat with the AI instead
+
+study: {id: ai-demo}                   # the rest as in the example above
+participant: {fields: {party: {type: category, values: [Democrat, Republican]}}}
+timing: {match_timeout: 90s, chat_duration: 6m}
+embed: {allowed_origins: ["https://*.qualtrics.com"]}
+`;
+
+const AI_SETTINGS = [
+  ['provider', 'anthropic', '<code>anthropic</code>, <code>openai</code>, or <code>openrouter</code>'],
+  ['model', 'claude-sonnet-5-5 / gpt-5-mini', 'any model id the provider accepts; <code>openrouter</code> has no default'],
+  ['api_key_env', 'ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY', 'the name of the environment variable that holds the key'],
+  ['system_prompt', 'required', 'inline text, or a <code>.md</code>/<code>.txt</code> file next to the study file; <code>{name}</code> placeholders'],
+  ['opening_message', 'none', 'the AI\'s first message (placeholders allowed); without it, the participant speaks first'],
+  ['vars', 'none', 'prompt-only values: a list of names (from embedded data of the same name), or <code>name: "${q://QID5/ChoiceTextEntryValue}"</code>'],
+  ['missing_vars', 'error', '<code>error</code>: a placeholder with no value stops the chat from starting; <code>empty</code>: fill in a blank'],
+  ['max_var_length', '1000', 'characters kept from each variable'],
+  ['max_tokens', '1000', 'per reply, including any model reasoning'],
+  ['effort', 'low', 'reasoning effort (anthropic and openai); <code>null</code> for models without it'],
+  ['temperature', 'none', 'openai and openrouter only; current Claude models reject it'],
+  ['max_turns', '20', 'AI replies per chat; then the chat ends (<code>end_reason: max_turns</code>)'],
+  ['reply_delay', '{min: 2s, max: 5s}', 'each reply waits a random time in this range after the message it answers'],
+  ['calls_per_minute', '10', 'model calls per chat per minute; extra messages are answered together'],
+  ['budget_tokens', 'none', 'tokens a condition may spend per server run; then chats end with <code>ai_budget_exhausted</code>'],
+  ['timeout', '30s', 'per model call; one retry on a timeout, rate limit, or server error, then <code>ai_error</code>'],
+];
+
 // Fake arrivals for the simulate sample, as they would appear in people.csv.
 const PEOPLE_CSV = `id,cond,party,top3,age,arrival_s
 p1,cross,Democrat,"coffee,hiking,jazz",34,0
@@ -142,6 +189,8 @@ const SETTINGS = [
   ['participant.id_param', 'id', 'URL parameter with the participant ID (the Qualtrics ResponseID)'],
   ['participant.condition_param', 'cond', 'URL parameter with the condition'],
   ['conditions.&lt;name&gt;.label', 'the name', 'text in the <code>/demo</code> condition dropdown'],
+  ['conditions.&lt;name&gt;.partner', 'human', '<code>ai</code>: each participant chats with the AI in <code>ai</code> (see <a href="#ai-partner">AI partner</a>)'],
+  ['conditions.&lt;name&gt;.ai', 'none', 'this condition\'s AI settings; they override the top-level <code>ai</code>'],
   ['conditions.&lt;name&gt;.relax_after', 'none', 'must be shorter than <code>timing.match_timeout</code>'],
   ['conditions.&lt;name&gt;.reveal', 'false', 'banner text with placeholders, or <code>false</code>'],
   ['conditions.&lt;name&gt;.timing', 'none', 'any <code>timing</code> key, for this condition only; it overrides the global value'],
@@ -159,7 +208,8 @@ const SETTINGS = [
   ['stages[].reveal', 'stage 1 only', 'the condition\'s <code>reveal</code> shows in stage 1; a stage may set its own'],
   ['stages[].then', 'continue', '<code>continue</code>: next stage in the same window, after a divider; <code>qualtrics</code>: the survey moves on and a later chat question rejoins the same partner. The last stage has no <code>then</code>'],
   ['chat.intro', 'none', 'a line at the top of every chat; placeholders allowed'],
-  ['on_timeout', 'nomatch', 'what happens after <code>match_timeout</code>: the "no partner" screen (the only option today)'],
+  ['on_timeout', 'nomatch', 'what happens after <code>match_timeout</code>: <code>nomatch</code> shows the "no partner" screen; <code>bot</code> starts a chat with the AI in <code>ai</code>'],
+  ['ai', 'none', 'the AI partner for <code>partner: ai</code> and <code>on_timeout: bot</code> (settings below)'],
   ['embed.allowed_origins', 'required', 'sites allowed to embed the chat and receive its messages, e.g. <code>https://*.qualtrics.com</code>'],
   ['embed.redirect_url', 'null', 'where Continue goes if the chat is opened outside an iframe; <code>{id}</code> and <code>{outcome}</code> are filled in'],
   ['embed.send_transcript_to_parent', 'false', 'also save the transcript in Qualtrics as <code>chat_transcript</code>'],
@@ -197,6 +247,10 @@ const ENV_VARS = [
   ['STUDY_DIR', 'A folder of study files; the same as pointing <code>STUDY_CONFIG</code> at a folder', 'A path inside your repository', 'Optional'],
   ['DATA_DIR', 'Where record files go when <code>MONGO_URI</code> is empty', 'A folder on your computer', 'Optional. Default: <code>data/</code>. Local testing only.'],
   ['PORT', 'The port the server listens on', 'Render sets it for you', 'Optional. Default: 3000. Do not set it on Render.'],
+  ['ANTHROPIC_API_KEY', 'API key for an AI partner with <code>provider: anthropic</code> (the name is set by <code>ai.api_key_env</code>)',
+    '<a href="https://console.anthropic.com">console.anthropic.com</a> &rarr; API keys', 'Only for an AI partner. Never put the key in study.yaml.'],
+  ['OPENAI_API_KEY', 'API key for <code>provider: openai</code>', '<a href="https://platform.openai.com">platform.openai.com</a> &rarr; API keys', 'Only for an AI partner'],
+  ['OPENROUTER_API_KEY', 'API key for <code>provider: openrouter</code>', '<a href="https://openrouter.ai">openrouter.ai</a> &rarr; Keys', 'Only for an AI partner'],
   ['NODE_VERSION', 'The Node.js version Render installs (read by Render, not by syncchat)', '<code>render.yaml</code> sets it to 22',
     'Set it to 22 only if you create the Render service by hand.'],
 ];
@@ -250,6 +304,19 @@ function configurationTab() {
     <p>With <code>then: qualtrics</code>, your survey needs one chat block per stage (<code>npm run qualtrics</code> writes a chat question for each; see <a href="#setup">Setup</a>, step 6). Whoever reaches the next chat question first waits for the partner, up to <code>rejoin_timeout</code>. A reload or dropped connection mid-stage reconnects to the same chat with its transcript. Outside Qualtrics (the <b>Try it</b> page), a <code>qualtrics</code> stage shows "In your study, your Qualtrics survey would show here" and a button to continue with the same partner.</p>
   </div>
 
+  <div class="panel" id="ai-partner">
+    <h2>AI partner</h2>
+    <p>A condition with <code>partner: ai</code> pairs each participant with an AI right away. <code>on_timeout: bot</code> gives participants who wait <code>match_timeout</code> without a partner the same AI instead of the "no partner" screen. Your server makes every model call with your own API key, read from an environment variable; the key never reaches the survey, the browser, or a URL.</p>
+    <pre><code>${highlightYaml(AI_YAML)}</code></pre>
+    <p><code>npm run explain</code> reads it back as:</p>
+    <pre class="out"><code>${esc(explainConfig(validateConfig(yaml.load(AI_YAML))).split('\n').slice(3).join('\n').trim())}</code></pre>
+    <h3>Prompt variables</h3>
+    <p>Write <code>{name}</code> in <code>system_prompt</code> or <code>opening_message</code>. A name can be a matching field (<code>{party}</code>) or a var listed under <code>vars</code> (<code>{prior_answer}</code>), such as an earlier question's answer or any embedded data. <code>npm run qualtrics</code> pipes each var into the chat question, and <code>CHECKLIST.md</code> shows how to set it from an earlier question. The validator rejects an unknown <code>{name}</code> and a var the prompts never use.</p>
+    <h3>Settings</h3>
+    ${table(['Setting', 'Default', 'Meaning'], AI_SETTINGS.map(([s, d, m]) => [`<code>ai.${s}</code>`, d === 'required' ? '<b>required</b>' : `<code>${d}</code>`, m]))}
+    <p>Each record shows the AI: <code>matches</code> stores the full prompt the model got (<code>ai.system_prompt</code>), <code>messages</code> stores <code>sender: ai</code> with the model id and token usage, and <code>chat_partner_id</code> in Qualtrics is <code>ai</code>. A failed call or a spent budget ends the chat with <code>chat_outcome</code> <code>ai_error</code> or <code>ai_budget_exhausted</code>. A chat with an AI partner cannot use <code>then: qualtrics</code> stages yet.</p>
+  </div>
+
   <div class="panel">
     <h2>Adding your own rule</h2>
     <p>Put a rule in a JavaScript file next to your study.yaml and point to it with <code>custom</code>. The file exports a plain-English <code>describe</code> (it completes "partners must ...") and a <code>test</code> that checks one pair and returns <code>{pass}</code>:</p>
@@ -287,7 +354,7 @@ function setupTab() {
       ['<b>Qualtrics</b>', 'your institution\'s license', 'Hosts the survey. You need to import a <code>.qsf</code> file or add JavaScript to a question; some institutional accounts need an administrator to enable JavaScript.'],
       ['<b>Node.js 20.12 or newer</b>', 'free', 'On your own computer, to check your study.yaml and generate the Qualtrics files (<a href="https://nodejs.org">nodejs.org</a>). Nothing runs on your computer during the study.'],
     ])}
-    <p class="callout">No AI or LLM API keys are needed. Participants chat with each other, and syncchat calls no outside services.</p>
+    <p class="callout">No AI or LLM API keys are needed for chats between participants; syncchat then calls no outside services. Only an <a href="#ai-partner">AI partner</a> needs a key from Anthropic, OpenAI, or OpenRouter, billed to your own account.</p>
   </div>
 
   <div class="panel">
@@ -341,6 +408,7 @@ npm run simulate study.yaml examples/people.csv   # edit or replace the CSV to m
         <li>Chat transcripts are stored in your own MongoDB database and pass through your own Render server. No data goes to the syncchat authors.</li>
         <li>Chat text is free text and can contain identifying information. Treat transcripts as identifiable until reviewed.</li>
         <li>Anything you show with <code>{partner.x}</code> in <code>reveal</code> or <code>chat.intro</code> discloses that answer to the partner. Say so in your consent form.</li>
+        <li>With an AI partner, the participant's messages and prompt variables go to the model provider you chose, under your account's data terms. Name the provider in your consent form. If participants may not know their partner is an AI (including the <code>on_timeout: bot</code> fallback), your IRB must approve the deception and the debriefing.</li>
         <li>Participants see no IDs, and the server never writes transcripts or participant IDs to its logs.</li>
         <li>Keep <code>ADMIN_TOKEN</code> and <code>MONGO_URI</code> private; <code>.env</code> is already in <code>.gitignore</code>.</li>
         </ul>`)}
