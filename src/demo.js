@@ -38,6 +38,10 @@ function renderDemo(config, { study = null } = {}) {
       conds.map(([c, d]) => `<option value="${esc(c)}">${esc(d.label || c)}</option>`).join('') + '</select></div>'
     : `<input type="hidden" name="${esc(condParam)}" value="${esc(conds[0][0])}">`;
   const studyHtml = study ? `<input type="hidden" name="study" value="${esc(study)}">` : '';
+  // AI prompt variables: in a study these come from Qualtrics; here the tester types them.
+  const vars = [...new Set(conds.flatMap(([, d]) => (d.ai ? Object.keys(d.ai.vars) : [])))];
+  const varHtml = vars.map((v) => `<div class="field"><label class="q" for="v-${esc(v)}">${esc(v)} <span class="hint">(AI prompt variable; in a study, piped from Qualtrics)</span></label>` +
+    `<textarea id="v-${esc(v)}" name="${esc(v)}" rows="2" required></textarea></div>`).join('\n    ');
   const back = study ? '<a class="back" href="/gallery">&larr; All examples</a>' : '';
   const hint = config.description ? `<p class="tip"><strong>How matching works:</strong> ${esc(config.description)}</p>` : '';
 
@@ -58,7 +62,7 @@ function renderDemo(config, { study = null } = {}) {
   .q { display: block; font-weight: 600; margin-bottom: 8px; }
   .q::first-letter { text-transform: uppercase; }
   .hint { font-weight: 400; color: var(--muted); }
-  input, select { width: 100%; padding: 12px; font: inherit; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  input, select, textarea { width: 100%; padding: 12px; font: inherit; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { font: inherit; padding: 9px 15px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
   .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -78,6 +82,7 @@ function renderDemo(config, { study = null } = {}) {
   ${hint}
   <form id="form" novalidate>
     ${Object.entries(fields).map(([n, d]) => fieldHtml(n, d)).join('\n    ')}
+    ${varHtml}
     ${condHtml}
     ${studyHtml}
     <button class="go" type="submit">Start</button>
@@ -105,7 +110,7 @@ function renderDemo(config, { study = null } = {}) {
     const err = document.getElementById('err');
     const params = new URLSearchParams();
     params.set(${JSON.stringify(idParam)}, 'demo-' + Math.random().toString(36).slice(2, 10));
-    for (const el of form.querySelectorAll('input[name], select[name]')) {
+    for (const el of form.querySelectorAll('input[name], select[name], textarea[name]')) {
       if (el.required && !el.value.trim()) { err.textContent = 'Please answer every question.'; return el.focus(); }
       if (!el.checkValidity()) { err.textContent = el.validationMessage; return el.focus(); }
       params.set(el.name, el.value.trim());
