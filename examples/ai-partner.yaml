@@ -1,0 +1,44 @@
+# An AI chat partner, with a human condition that falls back to the AI.
+# The model call is made by the server; the key lives in the ANTHROPIC_API_KEY environment variable.
+title: AI partner from the other party
+description: In "human", Democrats and Republicans chat with each other. In "ai", each participant chats with an AI that plays someone from the other party. The AI's prompt uses the participant's party and their answer to an earlier open-ended question.
+
+study:
+  id: ai-partner
+
+participant:
+  fields:
+    party: {type: category, values: [Democrat, Republican], label: "Which party do you lean toward?"}
+
+conditions:
+  human:
+    label: Another participant
+    require:
+      - differ: party
+    reveal: "Your partner is a {partner.party}."
+  ai:
+    label: AI partner
+    partner: ai                       # no matching: the chat starts right away with the AI
+    reveal: false
+
+ai:                                   # used by the "ai" condition, and by on_timeout: bot
+  provider: anthropic                 # anthropic, openai, or openrouter
+  model: claude-sonnet-5-5
+  api_key_env: ANTHROPIC_API_KEY      # the NAME of the environment variable; never the key itself
+  system_prompt: prompts/outgroup.md  # a file next to this one, or inline text
+  opening_message: "Hi! I think we vote differently, which should make this interesting. What's on your mind?"
+  vars:                               # prompt-only values, sent by Qualtrics in the chat URL
+    issue_text: "${q://QID5/ChoiceTextEntryValue}"   # the answer to an earlier text question
+  max_turns: 15                       # AI replies per chat (spend cap)
+  max_tokens: 600
+  reply_delay: {min: 2s, max: 6s}     # pace replies like a person typing
+  budget_tokens: 2000000              # per condition, per server run; then new chats end with ai_budget_exhausted
+
+timing:
+  match_timeout: 90s
+  chat_duration: 6m
+
+on_timeout: bot                       # "human" participants with no partner after 90s chat with the AI instead
+
+embed:
+  allowed_origins: ["https://*.qualtrics.com"]
